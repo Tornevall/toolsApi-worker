@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Validate documentation
+        run: |
+          test -s README.md
+          test -s CHANGELOG.md
+          test -s docs/architecture.md
+          test -s docs/contracts.md
+      - name: Run tests when present
+        run: |
+          if [ -d tests ]; then
+            python -m unittest discover -s tests -v
+          else
+            echo "No tests directory yet - documentation/bootstrap validation only."
+          fi
