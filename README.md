@@ -52,9 +52,11 @@ Or:
 make install-system
 ```
 
-The installer creates a dedicated `toolsapi-worker` system user, installs the Python package into `/opt/toolsapi-worker/.venv`, creates `/etc/toolsapi-worker/toolsapi-worker.env`, installs a hardened systemd unit and enables it. It does not start a worker until a non-placeholder ToolsAPI URL and worker token exist.
+The installer creates a dedicated `toolsapi-worker` system user, installs the Python package into `/opt/toolsapi-worker/.venv`, creates the host runtime configuration at `/etc/toolsapi-worker/.env`, symlinks `/opt/toolsapi-worker/.env` to that canonical file, installs a hardened systemd unit and enables it. It does not start a worker until a non-placeholder ToolsAPI URL and worker token exist.
 
-After configuring `/etc/toolsapi-worker/toolsapi-worker.env`:
+The runtime `.env` is created from the committed `.env.example` only when `/etc/toolsapi-worker/.env` does not already exist. Reinstall and deploy must preserve the existing host `.env` and its secrets.
+
+After configuring `/etc/toolsapi-worker/.env`:
 
 ```bash
 sudo systemctl restart toolsapi-worker
@@ -75,7 +77,7 @@ make smoke-install
 
 ## CI and installation testing
 
-GitHub Actions runs on Ubuntu 22.04 and Ubuntu 24.04. CI tests Python 3.11/3.12, repository/documentation requirements, unit tests, isolated package installation and the actual root/systemd installer. The system installer is run twice to verify idempotency and then uninstalled while confirming configuration retention.
+GitHub Actions runs on Ubuntu 22.04 and Ubuntu 24.04. CI tests Python 3.10, 3.11 and 3.12, repository/documentation requirements, unit tests, isolated package installation and the actual root/systemd installer. The system installer is run twice to verify idempotency and `.env` preservation, then uninstalled while confirming configuration retention.
 
 ## Deployment
 
@@ -88,11 +90,11 @@ Deployment uses the GitHub `production` Environment and expects these secrets:
 - `WORKER_DEPLOY_PORT` (optional, defaults to 22)
 - `WORKER_DEPLOY_SSH_KEY`
 
-The remote host checks out the exact commit SHA and reruns the idempotent installer. Existing `/etc/toolsapi-worker/toolsapi-worker.env` configuration is preserved. Production Environment protection rules can be used to require approval before deployment.
+The remote host checks out the exact commit SHA and reruns the idempotent installer. Existing `/etc/toolsapi-worker/.env` configuration is preserved. Production Environment protection rules can be used to require approval before deployment.
 
 ## Configuration
 
-Copy `.env.example` and provide a ToolsAPI endpoint and dedicated worker credential. Secrets must never be committed.
+`.env.example` is the committed template. The real host configuration is `/etc/toolsapi-worker/.env`, also exposed to the installed application as `/opt/toolsapi-worker/.env` through a symlink. Secrets must never be committed.
 
 ## Agent/development rules
 
