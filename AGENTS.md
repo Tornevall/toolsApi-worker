@@ -1,36 +1,65 @@
 # AGENTS.md
 
-## Scope
+## Purpose
 
-This repository contains the standalone ToolsAPI worker runtime. It is not a second ToolsAPI application and must not depend on a checked-out `toolsApi` repository at runtime.
+This repository contains standalone ToolsAPI workers. Workers execute delegated workloads, but ToolsAPI remains the authority for job ownership, lease validity, timeout, retry and persistence.
 
 ## Non-negotiable worker rules
 
-- ToolsAPI is the sole authority for job assignment, lease timeout, reassignment and terminal acceptance.
-- Workers poll. ToolsAPI does not need to open inbound connections to worker hosts.
-- A worker may execute only a job for which it holds the current valid lease generation.
-- Every heartbeat, progress update and terminal result must include the active job id and lease identity/generation.
-- A stale or superseded lease must never be allowed to submit a result.
-- Claiming must be atomic. Never introduce a path where two workers can hold valid leases for the same job generation.
-- A worker must keep reporting while it processes a job. Timeout is based on the latest report accepted by ToolsAPI.
-- After processing finishes, the worker must keep ownership semantics until ToolsAPI accepts the terminal result. Retry the same idempotent completion request if acknowledgement is uncertain.
-- Do not execute arbitrary installation commands, packages or code supplied dynamically by ToolsAPI.
-- Workload compatibility is negotiated using versioned handler contracts and advertised capabilities.
+- Workers poll ToolsAPI for work. Do not require inbound connectivity from ToolsAPI to worker hosts.
+- Job claims must be atomic and produce an opaque lease identifier plus generation/attempt.
+- A worker may process or report on a job only while its current lease is valid.
+- Heartbeat/progress refreshes ownership through ToolsAPI. Workers never decide that their own lease timeout has been extended.
+- ToolsAPI decides when a worker has timed out based on the latest accepted report.
+- Expired or superseded leases must be rejected for progress, failure and completion submissions.
+- Never allow two current lease generations for the same delegated job.
+- Completion calls must be safely retryable/idempotent. A worker must not assume completion was accepted when the response is lost.
+- Workers may claim new work only according to concurrency/capability policy after ToolsAPI has accepted terminal state for prior work.
 
-## Repository boundaries
+## Workload contracts and reuse
 
-ToolsAPI owns users, authorization, source data, job state, scheduling, leases and persisted results. The worker owns local execution of explicit handlers.
+- ToolsAPI sends declarative job requirements, never arbitrary shell/install commands or executable code.
+- Handlers and dependencies are installed through normal worker deploy/versioning.
+- Each delegated job identifies a handler contract version.
+- Workers advertise installed handler versions and capabilities and only claim compatible jobs.
+- Keep ToolsAPI business logic in ToolsAPI. Keep worker-side execution logic in this repository or in explicit reusable packages.
+- Do not require a checkout of the ToolsAPI repository on worker hosts.
+- Contract changes must be documented and tested in both repositories where compatibility can be affected.
 
-Do not add direct database access, shared filesystem assumptions or Laravel/PHP dependencies.
+## Runtime configuration
+
+- `.env.example` is the committed configuration template.
+- A real host `.env` must be created during installation when missing.
+- The canonical production runtime configuration is `/etc/toolsapi-worker/.env`.
+- `/opt/toolsapi-worker/.env` may expose that file through a symlink for normal application discovery.
+- Install, reinstall and deploy must preserve an existing runtime `.env` and its values.
+- Never commit `.env`, credentials, worker tokens or deployment secrets.
+
+## Testing
+
+Every change affecting leases, claim semantics, heartbeat, retries, installer, configuration or handler contracts requires tests.
+
+Tests should cover at minimum when relevant:
+
+- simultaneous claims produce only one valid lease
+- heartbeat extends ownership only when ToolsAPI accepts it
+- stale leases become reassignable
+- previous workers cannot submit after reassignment
+- duplicate completion requests do not duplicate results
+- worker restart does not invent ownership
+- capability/contract mismatches are not claimed
+- installer is idempotent
+- existing runtime `.env` survives reinstall/deploy
+- install and uninstall preserve configuration according to documented policy
 
 ## Documentation
 
-Changes to worker behavior or contracts must update the relevant documentation under `docs/` and `CHANGELOG.md`. Installation/deployment changes must update `README.md` when user-facing behavior changes.
-
-## Tests
-
-Every new handler or lease-state behavior must include tests. Changes affecting installation must keep the Ubuntu installation smoke workflow passing. Changes affecting deployment must preserve manual deployment even when automatic deployment is disabled.
+Update README and CHANGELOG with user-visible, operational or contract changes. Update `docs/contracts.md` or `docs/architecture.md` when protocol semantics change.
 
 ## Security
 
-Never commit worker credentials, ToolsAPI tokens, SSH keys or production `.env` files. Worker credentials must be dedicated and revocable, not normal user/admin credentials.
+- Use dedicated revocable worker credentials.
+- Never grant workers direct database access.
+- Use lease-scoped or short-lived access to input media.
+- Do not log secrets or raw credentials.
+- Remove temporary job inputs when retention policy requires it.
