@@ -20,12 +20,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
       - name: Validate required repository files
         run: |
           test -s README.md
           test -s CHANGELOG.md
           test -s AGENTS.md
           test -s Makefile
+          test -s .env.example
           test -s docs/architecture.md
           test -s docs/contracts.md
           test -s scripts/install.sh
@@ -34,7 +36,7 @@ jobs:
       - name: Install package
         run: python -m pip install .
       - name: Run checks
-        run: make check PYTHON=python
+        run: make check
       - name: Smoke-test isolated install
         run: make smoke-install
 
@@ -49,16 +51,23 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y python3-venv
       - name: Run system installer
         run: sudo ./scripts/install.sh
-      - name: Verify installed CLI and systemd unit
+      - name: Verify installed CLI, .env and systemd unit
         run: |
           /opt/toolsapi-worker/.venv/bin/toolsapi-worker status
           systemctl is-enabled toolsapi-worker.service
-          test -f /etc/toolsapi-worker/toolsapi-worker.env
+          test -f /etc/toolsapi-worker/.env
+          test -L /opt/toolsapi-worker/.env
+          test "$(readlink -f /opt/toolsapi-worker/.env)" = "/etc/toolsapi-worker/.env"
           test -f /etc/systemd/system/toolsapi-worker.service
-      - name: Verify installer is idempotent
-        run: sudo ./scripts/install.sh
-      - name: Uninstall while retaining config
+          grep -q '^EnvironmentFile=/etc/toolsapi-worker/.env$' /etc/systemd/system/toolsapi-worker.service
+      - name: Verify installer is idempotent and preserves .env
+        run: |
+          printf '\nTOOLS_INSTALL_TEST_SENTINEL=preserve-me\n' | sudo tee -a /etc/toolsapi-worker/.env >/dev/null
+          sudo ./scripts/install.sh
+          grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' /etc/toolsapi-worker/.env
+      - name: Uninstall while retaining .env
         run: |
           sudo ./scripts/uninstall.sh
           test ! -e /opt/toolsapi-worker
-          test -f /etc/toolsapi-worker/toolsapi-worker.env
+          test -f /etc/toolsapi-worker/.env
+          grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' /etc/toolsapi-worker/.env
