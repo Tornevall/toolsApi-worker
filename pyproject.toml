@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "toolsapi-worker"
+version = "0.1.0.dev0"
+description = "Standalone worker runtime for delegated Tornevall ToolsAPI workloads"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name = "Tornevall Networks"}]
+dependencies = []
+
+[project.scripts]
+toolsapi-worker = "toolsapi_worker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

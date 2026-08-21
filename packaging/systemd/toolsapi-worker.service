@@ -1,0 +1,22 @@
+[Unit]
+Description=Tornevall ToolsAPI Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_USER@
+EnvironmentFile=@CONFIG_DIR@/toolsapi-worker.env
+WorkingDirectory=@PREFIX@
+ExecStart=@PREFIX@/.venv/bin/toolsapi-worker run
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=@PREFIX@
+
+[Install]
+WantedBy=multi-user.target
