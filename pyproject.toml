@@ -7,7 +7,7 @@ name = "toolsapi-worker"
 version = "0.1.0.dev0"
 description = "Standalone worker runtime for delegated Tornevall ToolsAPI workloads"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 authors = [{name = "Tornevall Networks"}]
 dependencies = []
 
