@@ -44,6 +44,7 @@ ln -sfn "${ENV_FILE}" "${PREFIX}/.env"
 sed \
   -e "s|@PREFIX@|${PREFIX}|g" \
   -e "s|@CONFIG_DIR@|${CONFIG_DIR}|g" \
+  -e "s|@SERVICE_USER@|${SERVICE_USER}|g" \
   "${SOURCE_DIR}/packaging/systemd/toolsapi-worker.service" \
   > "/etc/systemd/system/${SERVICE_NAME}.service"
 
