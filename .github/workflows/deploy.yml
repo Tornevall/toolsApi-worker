@@ -51,12 +51,13 @@ jobs:
           cd "$TMP/repo"
           git checkout --detach "$SHA"
           sudo ./scripts/install.sh
-          if grep -Eq '^TOOLS_WORKER_TOKEN=.+$' /etc/toolsapi-worker/toolsapi-worker.env \
-             && grep -Eq '^TOOLS_API_BASE_URL=https?://.+' /etc/toolsapi-worker/toolsapi-worker.env \
-             && ! grep -q '^TOOLS_API_BASE_URL=https://tools.example.test$' /etc/toolsapi-worker/toolsapi-worker.env; then
+          ENV_FILE=/etc/toolsapi-worker/.env
+          if grep -Eq '^TOOLS_WORKER_TOKEN=.+$' "$ENV_FILE" \
+             && grep -Eq '^TOOLS_API_BASE_URL=https?://.+' "$ENV_FILE" \
+             && ! grep -q '^TOOLS_API_BASE_URL=https://tools.example.test$' "$ENV_FILE"; then
             sudo systemctl restart toolsapi-worker.service
             sudo systemctl --no-pager --full status toolsapi-worker.service
           else
-            echo "Worker installed but not restarted because production credentials are not configured."
+            echo "Worker installed but not restarted because production credentials are not configured in $ENV_FILE."
           fi
           REMOTE
