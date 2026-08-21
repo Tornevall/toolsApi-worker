@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=@SERVICE_USER@
-Group=@SERVICE_USER@
-EnvironmentFile=@CONFIG_DIR@/toolsapi-worker.env
+User=toolsapi-worker
+Group=toolsapi-worker
+EnvironmentFile=@CONFIG_DIR@/.env
 WorkingDirectory=@PREFIX@
 ExecStart=@PREFIX@/.venv/bin/toolsapi-worker run
 Restart=on-failure
