@@ -54,7 +54,7 @@ make install-system
 
 The installer creates a dedicated `toolsapi-worker` system user, installs the Python package into `/opt/toolsapi-worker/.venv`, creates the host runtime configuration at `/etc/toolsapi-worker/.env`, symlinks `/opt/toolsapi-worker/.env` to that canonical file, installs a hardened systemd unit and enables it. It does not start a worker until a non-placeholder ToolsAPI URL and worker token exist.
 
-The runtime `.env` is created from the committed `.env.example` only when `/etc/toolsapi-worker/.env` does not already exist. Reinstall and deploy must preserve the existing host `.env` and its secrets.
+The runtime `.env` is created from the committed `.env.example` only when `/etc/toolsapi-worker/.env` does not already exist. Reinstall and deploy must preserve the existing host `.env` and its secrets. The file is owned by `root:toolsapi-worker` with mode `0640`.
 
 After configuring `/etc/toolsapi-worker/.env`:
 
@@ -94,7 +94,7 @@ The remote host checks out the exact commit SHA and reruns the idempotent instal
 
 ## Configuration
 
-`.env.example` is the committed template. The real host configuration is `/etc/toolsapi-worker/.env`, also exposed to the installed application as `/opt/toolsapi-worker/.env` through a symlink. Secrets must never be committed.
+`.env.example` is the committed template. The real host configuration is `/etc/toolsapi-worker/.env`, also exposed to the installed application as `/opt/toolsapi-worker/.env` through a symlink. Secrets must never be committed. Local development `.env` files are ignored by Git.
 
 ## Agent/development rules
 
