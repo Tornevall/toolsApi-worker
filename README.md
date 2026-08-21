@@ -36,20 +36,67 @@ See [docs/architecture.md](docs/architecture.md) and [docs/contracts.md](docs/co
 
 Planned runtime support includes `faster-whisper`, CPU/CUDA execution, model/capability advertisement and retranscription with a requested model.
 
-## Development
+## Ubuntu installation
+
+Ubuntu is the primary host platform. The repository provides a Makefile and an idempotent system installer.
+
+```bash
+git clone https://github.com/Tornevall/toolsApi-worker.git
+cd toolsApi-worker
+sudo ./scripts/install.sh
+```
+
+Or:
+
+```bash
+make install-system
+```
+
+The installer creates a dedicated `toolsapi-worker` system user, installs the Python package into `/opt/toolsapi-worker/.venv`, creates `/etc/toolsapi-worker/toolsapi-worker.env`, installs a hardened systemd unit and enables it. It does not start a worker until a non-placeholder ToolsAPI URL and worker token exist.
+
+After configuring `/etc/toolsapi-worker/toolsapi-worker.env`:
+
+```bash
+sudo systemctl restart toolsapi-worker
+sudo systemctl status toolsapi-worker
+```
+
+Uninstall with `make uninstall`. Configuration is retained by default.
+
+## Development and tests
 
 ```bash
 python -m pip install -e .
-python -m unittest discover -s tests -v
+make check
+make smoke-install
 ```
 
-## CI
+`make check` runs compile/import sanity checks and unit tests. `make smoke-install` installs the package into an isolated virtual environment and verifies the CLI.
 
-GitHub Actions validates the package on supported Python versions, runs unit/contract tests, checks that core documentation exists and verifies that the package can be built.
+## CI and installation testing
+
+GitHub Actions runs on Ubuntu 22.04 and Ubuntu 24.04. CI tests Python 3.11/3.12, repository/documentation requirements, unit tests, isolated package installation and the actual root/systemd installer. The system installer is run twice to verify idempotency and then uninstalled while confirming configuration retention.
+
+## Deployment
+
+`.github/workflows/deploy.yml` supports manual deployment through `workflow_dispatch`. Automatic deployment after a push to `main` is enabled only when repository/environment variable `WORKER_AUTODEPLOY` is set to `true`.
+
+Deployment uses the GitHub `production` Environment and expects these secrets:
+
+- `WORKER_DEPLOY_HOST`
+- `WORKER_DEPLOY_USER`
+- `WORKER_DEPLOY_PORT` (optional, defaults to 22)
+- `WORKER_DEPLOY_SSH_KEY`
+
+The remote host checks out the exact commit SHA and reruns the idempotent installer. Existing `/etc/toolsapi-worker/toolsapi-worker.env` configuration is preserved. Production Environment protection rules can be used to require approval before deployment.
 
 ## Configuration
 
 Copy `.env.example` and provide a ToolsAPI endpoint and dedicated worker credential. Secrets must never be committed.
+
+## Agent/development rules
+
+[AGENTS.md](AGENTS.md) records the non-negotiable lease, split-brain, security, documentation and test rules for automated and human contributors.
 
 ## Versioning and changes
 
