@@ -12,18 +12,13 @@ All notable changes to toolsApi-worker are documented here.
 - Versioned workload contract model.
 - Initial `whisper.transcribe` workload direction.
 - Documentation requirements and CI validation baseline.
-- Python package/CLI bootstrap used by installation and smoke tests.
-- Makefile with development, test, packaging, system installation and uninstall targets.
-- Idempotent Ubuntu/systemd installer and uninstall scripts.
-- Hardened systemd service definition.
-- `AGENTS.md` with repository invariants for automated and human contributors.
-- Ubuntu 22.04/24.04 CI coverage including real installer/idempotency tests.
-- Manual and optional automatic production deployment workflow using GitHub Environments and SSH.
+- Ubuntu installer, Makefile, systemd service, installer smoke tests and guarded deployment workflow.
+- Canonical host runtime `.env` at `/etc/toolsapi-worker/.env`, exposed to the installed application through `/opt/toolsapi-worker/.env`.
+- CI verification that reinstall/deploy preserves existing `.env` values.
 
 ### Security
 
 - ToolsAPI remains sole authority for assignment and lease validity.
 - Expired or superseded leases must not be able to submit progress or terminal results.
 - Workers do not execute arbitrary installation instructions supplied by jobs.
-- Production deployment is opt-in and uses environment-scoped secrets.
-- System installation preserves worker credentials outside the repository and does not start with placeholder configuration.
+- Runtime `.env` and credentials are never committed; `.env.example` is the repository template.
