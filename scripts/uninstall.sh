@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PREFIX="${PREFIX:-/opt/toolsapi-worker}"
-CONFIG_DIR="${CONFIG_DIR:-/etc/toolsapi-worker}"
+ENV_FILE="${ENV_FILE:-${PREFIX}/.env}"
 SERVICE_NAME="${SERVICE_NAME:-toolsapi-worker}"
 SERVICE_USER="${SERVICE_USER:-toolsapi-worker}"
 
@@ -14,14 +14,24 @@ fi
 systemctl disable --now "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
 rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
 systemctl daemon-reload
-rm -rf "${PREFIX}"
 
 if [[ "${REMOVE_CONFIG:-false}" == "true" ]]; then
-  rm -rf "${CONFIG_DIR}"
+  rm -rf "${PREFIX}"
+else
+  if [[ -f "${ENV_FILE}" ]]; then
+    TMP_ENV="$(mktemp)"
+    cp -p "${ENV_FILE}" "${TMP_ENV}"
+    rm -rf "${PREFIX}"
+    install -d -m 0755 "${PREFIX}"
+    cp -p "${TMP_ENV}" "${ENV_FILE}"
+    rm -f "${TMP_ENV}"
+  else
+    rm -rf "${PREFIX}"
+  fi
 fi
 
 if id -u "${SERVICE_USER}" >/dev/null 2>&1; then
   userdel "${SERVICE_USER}" || true
 fi
 
-echo "Uninstalled ${SERVICE_NAME}. Configuration retained unless REMOVE_CONFIG=true was used."
+echo "Uninstalled ${SERVICE_NAME}. Project .env retained unless REMOVE_CONFIG=true was used."
