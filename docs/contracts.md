@@ -4,32 +4,21 @@ Worker contracts are versioned independently from deployment hostnames.
 
 ## Capability advertisement
 
-A worker advertises the handler contracts it supports, for example:
+The live `whisper.transcribe` claim request advertises the worker execution capability that ToolsAPI may assign against:
 
 ```json
 {
-  "worker_id": "gpu-node-01",
-  "handlers": {
-    "whisper.transcribe": ["1"]
-  },
-  "capabilities": {
-    "cpu": true,
-    "gpu": {
-      "available": true,
-      "vendor": "nvidia",
-      "vram_mb": 12288
-    },
-    "whisper": {
-      "engines": ["faster-whisper"],
-      "models": ["small", "medium", "turbo", "large"],
-      "compute_types": ["float16", "int8_float16"]
-    }
-  },
-  "concurrency": 1
+  "contract_version": 1,
+  "models": ["small", "medium"],
+  "device": "cpu",
+  "compute_type": "int8",
+  "accepts_url_sources": false
 }
 ```
 
-Capability advertisement/routing remains part of the broader worker implementation and is not enabled by the protocol client alone.
+ToolsAPI must leave incompatible jobs queued rather than mutating them. The current worker runtime defaults to `accepts_url_sources=false`, so live execution is restricted to Tools-hosted upload/staged media while URL fetching remains outside the worker runtime.
+
+A successful claim response must include `claim_policy_version >= 1`. Workers enabling live polling refuse claims from older ToolsAPI deployments that do not advertise this capability gate. This protects deployment order: the worker cannot start consuming jobs against an older server that would ignore its supported models or source restrictions.
 
 ## Whisper claim
 
@@ -49,7 +38,7 @@ A claim contains the current lease/generation and an input descriptor:
   "lease_expires_at": "2026-08-23T13:45:00+00:00",
   "model": "small",
   "language": "sv",
-  "diarization_requested": false,
+  "diarization_requested": true,
   "input": {
     "type": "tools_media",
     "download_url": "https://tools.example.test/api/whisper/worker/jobs/123/media"
@@ -57,7 +46,7 @@ A claim contains the current lease/generation and an input descriptor:
 }
 ```
 
-`input.type` is either `tools_media` or `url`. A URL-source claim carries the original external source URL only inside the authenticated claim response. A Tools-hosted media URL contains no bearer token or lease id.
+`input.type` remains `tools_media` or `url` at contract level. Live worker execution currently accepts `tools_media` only. URL-source jobs are not remotely assigned unless a worker explicitly advertises URL support, and URL jobs that request speaker diarization remain local until the remote path can preserve that post-processing behavior.
 
 ## Lease-bound media
 
@@ -86,7 +75,7 @@ Workers send progress through:
 }
 ```
 
-An accepted update refreshes the lease and the shared Whisper runtime heartbeat used by web/mobile polling.
+The production runtime reports heartbeat independently of segment production. A slow model load or slow CPU transcription can therefore keep the lease alive even while the visible progress percentage is unchanged. An accepted update refreshes the lease and the shared Whisper runtime heartbeat used by web/mobile polling.
 
 ## Completion
 
@@ -132,7 +121,13 @@ Retryable failures return the job to the ToolsAPI queue while attempts remain. E
 
 ## Worker ownership rule
 
-A worker must not claim new work for a concurrency slot until ToolsAPI has acknowledged the terminal result for the previous job or has explicitly rejected its lease. This is especially important when the HTTP acknowledgement is lost after ToolsAPI already persisted a result.
+A worker must not claim new work for a concurrency slot until ToolsAPI has acknowledged the terminal result for the previous job or has explicitly rejected its lease. The initial executable runtime is deliberately serial (`concurrency=1`). Terminal network failures are retried with the exact same payload while the slot remains occupied.
+
+Temporary job media is isolated in a per-job directory and removed only when processing leaves the ownership lifecycle after terminal acknowledgement or lease loss.
+
+## Runtime dependency
+
+Production system installation installs the `whisper` package extra, currently based on `faster-whisper>=1.2.1,<2`. The Python module is imported lazily by the execution handler so protocol-only unit tests do not require model runtime loading.
 
 ## Compatibility
 

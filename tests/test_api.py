@@ -65,10 +65,11 @@ class ToolsApiClientTest(unittest.TestCase):
         )
 
     @patch("urllib.request.urlopen")
-    def test_claim_uses_dedicated_worker_headers_and_parses_versioned_contract(self, urlopen):
+    def test_claim_uses_dedicated_worker_headers_and_advertises_capabilities(self, urlopen):
         urlopen.return_value = FakeResponse(
             {
                 "ok": True,
+                "claim_policy_version": 1,
                 "job": {
                     "job_id": 123,
                     "lease_id": "lease-abc",
@@ -87,17 +88,26 @@ class ToolsApiClientTest(unittest.TestCase):
             }
         )
 
-        claim = self.client.claim_whisper()
+        claim = self.client.claim_whisper(
+            models=("small", "medium"),
+            device="cpu",
+            compute_type="int8",
+            accepts_url_sources=False,
+        )
 
         self.assertIsInstance(claim, WhisperClaim)
         self.assertEqual(123, claim.job_id)
         self.assertEqual(2, claim.generation)
         self.assertEqual("url", claim.input_type)
-        self.assertFalse(claim.diarization_requested)
         request = urlopen.call_args.args[0]
         self.assertEqual("Bearer worker-secret", request.get_header("Authorization"))
         self.assertEqual("worker-mobile-slow", request.get_header("X-tools-worker-id"))
-        self.assertEqual("https://tools.example.test/api/whisper/worker/claim", request.full_url)
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(1, body["contract_version"])
+        self.assertEqual(["small", "medium"], body["models"])
+        self.assertEqual("cpu", body["device"])
+        self.assertEqual("int8", body["compute_type"])
+        self.assertFalse(body["accepts_url_sources"])
 
     @patch("urllib.request.urlopen")
     def test_claim_returns_none_when_queue_is_empty(self, urlopen):
@@ -107,10 +117,27 @@ class ToolsApiClientTest(unittest.TestCase):
                 "job": None,
                 "contract": "whisper.transcribe",
                 "contract_version": 1,
+                "claim_policy_version": 1,
             }
         )
 
         self.assertIsNone(self.client.claim_whisper())
+
+    @patch("urllib.request.urlopen")
+    def test_claim_refuses_toolsapi_without_capability_gate(self, urlopen):
+        urlopen.return_value = FakeResponse(
+            {
+                "ok": True,
+                "job": None,
+                "contract": "whisper.transcribe",
+                "contract_version": 1,
+            }
+        )
+
+        with self.assertRaises(WorkerApiError) as caught:
+            self.client.claim_whisper()
+
+        self.assertIn("capability-gated", str(caught.exception))
 
     @patch("urllib.request.urlopen")
     def test_progress_sends_current_lease_and_generation(self, urlopen):
@@ -223,6 +250,7 @@ class ToolsApiClientTest(unittest.TestCase):
         urlopen.return_value = FakeResponse(
             {
                 "ok": True,
+                "claim_policy_version": 1,
                 "job": {
                     "job_id": 123,
                     "lease_id": "lease-abc",
