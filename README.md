@@ -34,7 +34,11 @@ See [docs/architecture.md](docs/architecture.md) and [docs/contracts.md](docs/co
 
 `whisper.transcribe`
 
-Planned runtime support includes `faster-whisper`, CPU/CUDA execution, model/capability advertisement and retranscription with a requested model.
+The worker package now contains a dependency-free ToolsAPI client for version 1 claim and progress requests. It authenticates with the dedicated worker bearer credential, preserves the lease id/generation returned by ToolsAPI, and treats HTTP 409 as loss of job ownership.
+
+The production `run` loop deliberately remains disabled for live claims until secure media download and acknowledged terminal result/failure submission are implemented. This prevents an incomplete worker from claiming a real Whisper job that it cannot finish.
+
+Planned execution support includes `faster-whisper`, CPU/CUDA execution, model/capability advertisement and retranscription with a requested model.
 
 ## Ubuntu installation
 
@@ -73,7 +77,7 @@ make check
 make smoke-install
 ```
 
-`make check` runs compile/import sanity checks and unit tests. `make smoke-install` installs the package into an isolated virtual environment and verifies the CLI.
+`make check` runs compile/import sanity checks and unit tests. `make smoke-install` installs the package into an isolated virtual environment and verifies the CLI. Worker protocol tests mock ToolsAPI HTTP responses so credentials are never required in CI.
 
 ## CI and installation testing
 
@@ -96,6 +100,8 @@ The remote host checks out the exact commit SHA and reruns the idempotent instal
 
 `.env.example` is the committed template. The real host configuration is `/opt/toolsapi-worker/.env`, inside the installed project directory. Secrets must never be committed. Local development `.env` files are ignored by Git.
 
+`TOOLS_API_BASE_URL`, `TOOLS_WORKER_TOKEN` and `TOOLS_WORKER_ID` identify the ToolsAPI endpoint and dedicated worker credential. The configured token must correspond to a revocable ToolsAPI `provider_whisper_worker` credential whose name matches the worker id.
+
 ## Agent/development rules
 
 [AGENTS.md](AGENTS.md) records the non-negotiable lease, split-brain, security, documentation and test rules for automated and human contributors.
@@ -109,4 +115,6 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 - `Tornevall/toolsApi#468` - Whisper retranscription with another model
 - `Tornevall/toolsApi#469` - Remote Whisper worker support
 - `Tornevall/toolsApi#471` - Standalone worker repository planning
+- `Tornevall/toolsApi#701` - ToolsAPI claim/lease/progress bridge
 - `Tornevall/toolsApi-worker#1` - Worker bootstrap
+- `Tornevall/toolsApi-worker#3` - Whisper claim/progress client
