@@ -14,8 +14,13 @@ All notable changes to toolsApi-worker are documented here.
 - Dependency-free ToolsAPI client for version 1 Whisper claim and progress requests.
 - Lease-bound Tools-hosted media download support using dedicated worker auth plus lease/generation headers.
 - Idempotent Whisper completion and structured failure client calls using the same lease id and generation as the claim.
+- Executable serial `faster-whisper` runtime with CPU/CUDA device and compute-type configuration.
+- Independent heartbeat reporting while model loading/transcription is slow, so liveness does not depend on new transcript segments.
+- Capability-aware claim advertisement for supported models, device, compute type and URL-source support.
+- Per-job temporary media isolation and cleanup after acknowledged terminal state or lease loss.
+- Terminal acknowledgement retry that keeps the worker slot occupied and retries the exact same payload after transient API failures.
 - Worker protocol handling that preserves lease id/generation and treats HTTP 409 as loss of ownership or terminal-payload conflict.
-- Mocked HTTP regression coverage for claim, media download, progress, completion, failure, authentication failures and unsupported contract versions.
+- Regression coverage for protocol, runtime heartbeat, terminal retry, temp cleanup, configuration and installer behavior.
 - Documentation requirements and CI validation baseline.
 - Ubuntu installer, Makefile, systemd service, installer smoke tests and guarded deployment workflow.
 - Canonical runtime `.env` in the installed project directory at `/opt/toolsapi-worker/.env`.
@@ -24,7 +29,11 @@ All notable changes to toolsApi-worker are documented here.
 ### Changed
 
 - Corrected `.env.example` so it no longer describes `/etc/toolsapi-worker/.env` as the canonical runtime configuration path.
-- The production `run` loop remains disabled until the executable Whisper handler and terminal acknowledgement loop are complete; the protocol client can now perform every ToolsAPI-side request needed by that runtime.
+- Production system installation now installs the `whisper` runtime extra with `faster-whisper>=1.2.1,<2`.
+- `toolsapi-worker run` now executes the live serial polling lifecycle instead of returning the bootstrap placeholder error.
+- Live polling requires ToolsAPI `claim_policy_version >= 1`; older server deployments are rejected before any job is consumed.
+- URL-source execution remains disabled by default (`TOOLS_WORKER_ACCEPTS_URL_SOURCES=false`). Initial live execution is restricted to lease-bound Tools-hosted media.
+- Runtime concurrency is deliberately limited to `1` until parallel ownership/lifecycle handling has dedicated coverage.
 
 ### Security
 
@@ -34,3 +43,4 @@ All notable changes to toolsApi-worker are documented here.
 - Workers do not execute arbitrary installation instructions supplied by jobs.
 - Runtime `.env` and credentials are never committed; `.env.example` is the repository template.
 - Worker client error messages do not include the configured bearer credential.
+- Workers refuse live claims from ToolsAPI deployments that do not advertise capability-gated assignment policy.
