@@ -55,19 +55,17 @@ jobs:
         run: |
           /opt/toolsapi-worker/.venv/bin/toolsapi-worker status
           systemctl is-enabled toolsapi-worker.service
-          test -f /etc/toolsapi-worker/.env
-          test -L /opt/toolsapi-worker/.env
-          test "$(readlink -f /opt/toolsapi-worker/.env)" = "/etc/toolsapi-worker/.env"
+          sudo test -f /opt/toolsapi-worker/.env
           test -f /etc/systemd/system/toolsapi-worker.service
-          grep -q '^EnvironmentFile=/etc/toolsapi-worker/.env$' /etc/systemd/system/toolsapi-worker.service
+          grep -q '^EnvironmentFile=/opt/toolsapi-worker/.env$' /etc/systemd/system/toolsapi-worker.service
       - name: Verify installer is idempotent and preserves .env
         run: |
-          printf '\nTOOLS_INSTALL_TEST_SENTINEL=preserve-me\n' | sudo tee -a /etc/toolsapi-worker/.env >/dev/null
+          printf '\nTOOLS_INSTALL_TEST_SENTINEL=preserve-me\n' | sudo tee -a /opt/toolsapi-worker/.env >/dev/null
           sudo ./scripts/install.sh
-          grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' /etc/toolsapi-worker/.env
+          sudo grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' /opt/toolsapi-worker/.env
       - name: Uninstall while retaining .env
         run: |
           sudo ./scripts/uninstall.sh
-          test ! -e /opt/toolsapi-worker
-          test -f /etc/toolsapi-worker/.env
-          grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' /etc/toolsapi-worker/.env
+          sudo test -f /opt/toolsapi-worker/.env
+          sudo grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' /opt/toolsapi-worker/.env
+          test ! -e /opt/toolsapi-worker/.venv
