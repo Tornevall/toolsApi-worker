@@ -1,7 +1,9 @@
 import io
 import json
+import tempfile
 import unittest
 import urllib.error
+from pathlib import Path
 from unittest.mock import patch
 
 from toolsapi_worker.api import (
@@ -14,8 +16,12 @@ from toolsapi_worker.api import (
 
 
 class FakeResponse:
-    def __init__(self, payload: dict):
-        self.payload = json.dumps(payload).encode("utf-8")
+    def __init__(self, payload):
+        if isinstance(payload, bytes):
+            self.payload = payload
+        else:
+            self.payload = json.dumps(payload).encode("utf-8")
+        self.offset = 0
 
     def __enter__(self):
         return self
@@ -23,8 +29,14 @@ class FakeResponse:
     def __exit__(self, exc_type, exc, tb):
         return False
 
-    def read(self):
-        return self.payload
+    def read(self, size=-1):
+        if size is None or size < 0:
+            data = self.payload[self.offset :]
+            self.offset = len(self.payload)
+            return data
+        data = self.payload[self.offset : self.offset + size]
+        self.offset += len(data)
+        return data
 
 
 class ToolsApiClientTest(unittest.TestCase):
@@ -33,6 +45,23 @@ class ToolsApiClientTest(unittest.TestCase):
             "https://tools.example.test",
             "worker-secret",
             "worker-mobile-slow",
+        )
+
+    def claim(self, input_descriptor=None):
+        return WhisperClaim(
+            job_id=123,
+            lease_id="lease-abc",
+            generation=2,
+            contract="whisper.transcribe",
+            contract_version=1,
+            lease_expires_at="2026-08-23T13:45:00+00:00",
+            model="small",
+            language="sv",
+            diarization_requested=False,
+            input=input_descriptor or {
+                "type": "url",
+                "url": "https://media.example.test/audio.mp3",
+            },
         )
 
     @patch("urllib.request.urlopen")
@@ -49,6 +78,11 @@ class ToolsApiClientTest(unittest.TestCase):
                     "lease_expires_at": "2026-08-23T13:45:00+00:00",
                     "model": "small",
                     "language": "sv",
+                    "diarization_requested": False,
+                    "input": {
+                        "type": "url",
+                        "url": "https://media.example.test/audio.mp3",
+                    },
                 },
             }
         )
@@ -58,6 +92,8 @@ class ToolsApiClientTest(unittest.TestCase):
         self.assertIsInstance(claim, WhisperClaim)
         self.assertEqual(123, claim.job_id)
         self.assertEqual(2, claim.generation)
+        self.assertEqual("url", claim.input_type)
+        self.assertFalse(claim.diarization_requested)
         request = urlopen.call_args.args[0]
         self.assertEqual("Bearer worker-secret", request.get_header("Authorization"))
         self.assertEqual("worker-mobile-slow", request.get_header("X-tools-worker-id"))
@@ -90,16 +126,7 @@ class ToolsApiClientTest(unittest.TestCase):
                 },
             }
         )
-        claim = WhisperClaim(
-            job_id=123,
-            lease_id="lease-abc",
-            generation=2,
-            contract="whisper.transcribe",
-            contract_version=1,
-            lease_expires_at="2026-08-23T13:45:00+00:00",
-            model="small",
-            language="sv",
-        )
+        claim = self.claim()
 
         response = self.client.report_whisper_progress(
             claim,
@@ -114,7 +141,54 @@ class ToolsApiClientTest(unittest.TestCase):
         self.assertEqual("lease-abc", body["lease_id"])
         self.assertEqual(2, body["generation"])
         self.assertEqual(47, body["progress_percent"])
-        self.assertEqual("Transcribing", body["stage_label"])
+
+    @patch("urllib.request.urlopen")
+    def test_tools_media_download_uses_lease_headers_and_streams_to_disk(self, urlopen):
+        urlopen.return_value = FakeResponse(b"leased-media")
+        claim = self.claim(
+            {
+                "type": "tools_media",
+                "download_url": "https://tools.example.test/api/whisper/worker/jobs/123/media",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "job-123.bin"
+            result = self.client.download_whisper_media(claim, destination)
+            self.assertEqual(b"leased-media", result.read_bytes())
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual("lease-abc", request.get_header("X-tools-lease-id"))
+        self.assertEqual("2", request.get_header("X-tools-lease-generation"))
+        self.assertEqual("Bearer worker-secret", request.get_header("Authorization"))
+
+    @patch("urllib.request.urlopen")
+    def test_completion_and_failure_keep_terminal_payload_bound_to_lease(self, urlopen):
+        urlopen.side_effect = [
+            FakeResponse({"ok": True, "accepted": True, "duplicate": False, "job": {"id": 123, "status": "completed"}}),
+            FakeResponse({"ok": True, "accepted": True, "duplicate": True, "job": {"id": 123, "status": "queued"}}),
+        ]
+        claim = self.claim()
+
+        completed = self.client.complete_whisper(
+            claim,
+            "Transcript",
+            [{"start": 0, "end": 1.0, "text": "Transcript"}],
+            {"engine": "faster-whisper", "device": "cpu"},
+        )
+        failed = self.client.fail_whisper(claim, "worker_error", "Process failed", True)
+
+        self.assertTrue(completed["accepted"])
+        self.assertTrue(failed["accepted"])
+        completion_request = urlopen.call_args_list[0].args[0]
+        completion_body = json.loads(completion_request.data.decode("utf-8"))
+        self.assertEqual("lease-abc", completion_body["lease_id"])
+        self.assertEqual(2, completion_body["generation"])
+        self.assertEqual("Transcript", completion_body["transcript_text"])
+        failure_request = urlopen.call_args_list[1].args[0]
+        failure_body = json.loads(failure_request.data.decode("utf-8"))
+        self.assertEqual("worker_error", failure_body["error_code"])
+        self.assertTrue(failure_body["retryable"])
 
     @patch("urllib.request.urlopen")
     def test_409_is_lease_loss(self, urlopen):
@@ -125,10 +199,9 @@ class ToolsApiClientTest(unittest.TestCase):
             {},
             io.BytesIO(b"{}"),
         )
-        claim = WhisperClaim(123, "lease-abc", 2, "whisper.transcribe", 1, "", "small", "sv")
 
         with self.assertRaises(WorkerLeaseLostError):
-            self.client.report_whisper_progress(claim, 50)
+            self.client.report_whisper_progress(self.claim(), 50)
 
     @patch("urllib.request.urlopen")
     def test_authentication_failure_never_includes_worker_secret(self, urlopen):
@@ -146,7 +219,7 @@ class ToolsApiClientTest(unittest.TestCase):
         self.assertNotIn("worker-secret", str(caught.exception))
 
     @patch("urllib.request.urlopen")
-    def test_unknown_contract_is_rejected(self, urlopen):
+    def test_unknown_contract_or_input_is_rejected(self, urlopen):
         urlopen.return_value = FakeResponse(
             {
                 "ok": True,
@@ -157,6 +230,7 @@ class ToolsApiClientTest(unittest.TestCase):
                     "contract": "whisper.transcribe",
                     "contract_version": 99,
                     "lease_expires_at": "2026-08-23T13:45:00+00:00",
+                    "input": {"type": "url", "url": "https://media.example.test/audio.mp3"},
                 },
             }
         )

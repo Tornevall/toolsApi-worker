@@ -34,9 +34,19 @@ See [docs/architecture.md](docs/architecture.md) and [docs/contracts.md](docs/co
 
 `whisper.transcribe`
 
-The worker package now contains a dependency-free ToolsAPI client for version 1 claim and progress requests. It authenticates with the dedicated worker bearer credential, preserves the lease id/generation returned by ToolsAPI, and treats HTTP 409 as loss of job ownership.
+The worker package now contains the ToolsAPI protocol client needed for the full network side of a remote transcription:
 
-The production `run` loop deliberately remains disabled for live claims until secure media download and acknowledged terminal result/failure submission are implemented. This prevents an incomplete worker from claiming a real Whisper job that it cannot finish.
+- claim a version 1 Whisper job
+- preserve lease id + generation
+- report heartbeat/progress
+- download Tools-hosted media with lease/generation headers
+- submit completed transcript text + segments + safe runtime metadata
+- submit structured retryable/non-retryable failures
+- treat HTTP 409 as ownership loss or terminal-payload conflict
+
+Terminal calls are deliberately retryable with the exact same payload so a lost HTTP acknowledgement does not force the worker to guess whether ToolsAPI persisted the result.
+
+The production `run` loop remains disabled until the executable Whisper handler and terminal acknowledgement loop are complete and tested. The protocol client no longer blocks that work; the remaining part is local execution/lifecycle control.
 
 Planned execution support includes `faster-whisper`, CPU/CUDA execution, model/capability advertisement and retranscription with a requested model.
 
@@ -116,5 +126,7 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 - `Tornevall/toolsApi#469` - Remote Whisper worker support
 - `Tornevall/toolsApi#471` - Standalone worker repository planning
 - `Tornevall/toolsApi#701` - ToolsAPI claim/lease/progress bridge
+- `Tornevall/toolsApi#703` - ToolsAPI media + terminal protocol
 - `Tornevall/toolsApi-worker#1` - Worker bootstrap
 - `Tornevall/toolsApi-worker#3` - Whisper claim/progress client
+- `Tornevall/toolsApi-worker#5` - Media/terminal/runtime worker work

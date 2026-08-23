@@ -29,17 +29,15 @@ A worker advertises the handler contracts it supports, for example:
 }
 ```
 
-ToolsAPI may assign a job only if the worker advertises a compatible handler contract and required capabilities. Capability advertisement/routing is part of the broader worker implementation and is not yet enabled by the first progress-client slice.
+Capability advertisement/routing remains part of the broader worker implementation and is not enabled by the protocol client alone.
 
-## Current Whisper claim endpoint
+## Whisper claim
 
-The first implemented ToolsAPI contract is version `1` of `whisper.transcribe`.
-
-Workers authenticate with their dedicated bearer credential and stable worker id, then call:
+Workers authenticate with a dedicated bearer credential and stable worker id, then call:
 
 `POST /api/whisper/worker/claim`
 
-A successful claim currently contains:
+A claim contains the current lease/generation and an input descriptor:
 
 ```json
 {
@@ -50,13 +48,27 @@ A successful claim currently contains:
   "generation": 2,
   "lease_expires_at": "2026-08-23T13:45:00+00:00",
   "model": "small",
-  "language": "sv"
+  "language": "sv",
+  "diarization_requested": false,
+  "input": {
+    "type": "tools_media",
+    "download_url": "https://tools.example.test/api/whisper/worker/jobs/123/media"
+  }
 }
 ```
 
-`lease_id` is opaque and must never be logged as a credential-like value. `generation` identifies the current ownership generation and changes when an expired job is reassigned.
+`input.type` is either `tools_media` or `url`. A URL-source claim carries the original external source URL only inside the authenticated claim response. A Tools-hosted media URL contains no bearer token or lease id.
 
-The worker client also accepts `handler` as an alias for `contract` so the naming can evolve without silently accepting an unknown version.
+## Lease-bound media
+
+For `tools_media` claims the worker downloads the source through the supplied URL and sends:
+
+- `Authorization: Bearer <worker credential>`
+- `X-Tools-Worker-Id`
+- `X-Tools-Lease-Id`
+- `X-Tools-Lease-Generation`
+
+ToolsAPI validates current ownership before streaming the file. HTTP `409` means ownership is no longer valid and processing must stop.
 
 ## Heartbeat/progress
 
@@ -74,27 +86,53 @@ Workers send progress through:
 }
 ```
 
-ToolsAPI validates the worker identity, job id, lease id and generation before accepting the update. An accepted progress report refreshes the remote lease and the shared Whisper runtime heartbeat used by web/mobile job polling.
+An accepted update refreshes the lease and the shared Whisper runtime heartbeat used by web/mobile polling.
 
-HTTP `409` means the lease is stale, expired or no longer owned by this worker. The worker must treat that response as ownership loss and stop processing as soon as practical.
+## Completion
 
-## Terminal result
+Workers submit completed transcripts through:
 
-Terminal submissions will be idempotent for the current valid lease. That endpoint is not implemented yet and therefore the production polling loop must not claim live jobs solely on the basis of the claim/progress client.
-
-The intended terminal shape remains:
+`POST /api/whisper/worker/jobs/{job_id}/complete`
 
 ```json
 {
-  "job_id": 123,
   "lease_id": "opaque-value",
   "generation": 2,
-  "status": "completed",
-  "result": {}
+  "transcript_text": "Example transcript",
+  "segments": [
+    {"start": 0.0, "end": 1.2, "text": "Example transcript"}
+  ],
+  "runtime": {
+    "engine": "faster-whisper",
+    "device": "cpu",
+    "compute_type": "int8"
+  }
 }
 ```
 
-ToolsAPI must acknowledge persistence. Until acknowledgement is received, a worker may retry the exact same terminal submission. It must not acquire a second job merely because an acknowledgement was lost if its configured concurrency is exhausted.
+ToolsAPI persists the result before acknowledging it. The exact same terminal submission may be retried after a lost acknowledgement and returns `duplicate=true`. A conflicting terminal payload for the same lease generation is rejected with HTTP `409`.
+
+## Failure
+
+Structured failures use:
+
+`POST /api/whisper/worker/jobs/{job_id}/fail`
+
+```json
+{
+  "lease_id": "opaque-value",
+  "generation": 2,
+  "error_code": "transcription_failed",
+  "message": "Worker process failed",
+  "retryable": true
+}
+```
+
+Retryable failures return the job to the ToolsAPI queue while attempts remain. Exact duplicate failure submissions are idempotent.
+
+## Worker ownership rule
+
+A worker must not claim new work for a concurrency slot until ToolsAPI has acknowledged the terminal result for the previous job or has explicitly rejected its lease. This is especially important when the HTTP acknowledgement is lost after ToolsAPI already persisted a result.
 
 ## Compatibility
 
