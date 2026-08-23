@@ -1,0 +1,63 @@
+name: Deploy worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: toolsapi-worker-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.WORKER_AUTODEPLOY == 'true' }}
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.WORKER_DEPLOY_SSH_KEY }}
+          SSH_HOST: ${{ secrets.WORKER_DEPLOY_HOST }}
+          SSH_PORT: ${{ secrets.WORKER_DEPLOY_PORT }}
+        run: |
+          test -n "$SSH_KEY"
+          test -n "$SSH_HOST"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          PORT="${SSH_PORT:-22}"
+          ssh-keyscan -p "$PORT" "$SSH_HOST" >> ~/.ssh/known_hosts
+      - name: Deploy exact commit
+        env:
+          SSH_HOST: ${{ secrets.WORKER_DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.WORKER_DEPLOY_USER }}
+          SSH_PORT: ${{ secrets.WORKER_DEPLOY_PORT }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          test -n "$SSH_USER"
+          PORT="${SSH_PORT:-22}"
+          ssh -p "$PORT" "$SSH_USER@$SSH_HOST" "bash -s -- '$DEPLOY_SHA'" <<'REMOTE'
+          set -euo pipefail
+          SHA="$1"
+          TMP="$(mktemp -d)"
+          trap 'rm -rf "$TMP"' EXIT
+          git clone --filter=blob:none https://github.com/Tornevall/toolsApi-worker.git "$TMP/repo"
+          cd "$TMP/repo"
+          git checkout --detach "$SHA"
+          sudo ./scripts/install.sh
+          ENV_FILE=/opt/toolsapi-worker/.env
+          if sudo grep -Eq '^TOOLS_WORKER_TOKEN=.+$' "$ENV_FILE" \
+             && sudo grep -Eq '^TOOLS_API_BASE_URL=https?://.+' "$ENV_FILE" \
+             && ! sudo grep -q '^TOOLS_API_BASE_URL=https://tools.example.test$' "$ENV_FILE"; then
+            sudo systemctl restart toolsapi-worker.service
+            sudo systemctl --no-pager --full status toolsapi-worker.service
+          else
+            echo "Worker installed but not restarted because production credentials are not configured in $ENV_FILE."
+          fi
+          REMOTE
