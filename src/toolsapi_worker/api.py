@@ -6,7 +6,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 class WorkerApiError(RuntimeError):
@@ -59,8 +59,28 @@ class ToolsApiClient:
         if not self.worker_id:
             raise ValueError("TOOLS_WORKER_ID is required")
 
-    def claim_whisper(self) -> WhisperClaim | None:
-        payload = self._request_json("POST", "/api/whisper/worker/claim", {})
+    def claim_whisper(
+        self,
+        models: Iterable[str] = ("small",),
+        device: str = "cpu",
+        compute_type: str = "int8",
+        accepts_url_sources: bool = False,
+    ) -> WhisperClaim | None:
+        advertised_models = [str(model).strip().lower() for model in models if str(model).strip()]
+        if not advertised_models:
+            raise ValueError("At least one Whisper model must be advertised")
+
+        payload = self._request_json(
+            "POST",
+            "/api/whisper/worker/claim",
+            {
+                "contract_version": 1,
+                "models": advertised_models,
+                "device": device,
+                "compute_type": compute_type,
+                "accepts_url_sources": bool(accepts_url_sources),
+            },
+        )
         job = payload.get("job")
         if job is None:
             return None
