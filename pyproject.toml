@@ -11,6 +11,9 @@ requires-python = ">=3.10"
 authors = [{name = "Tornevall Networks"}]
 dependencies = []
 
+[project.optional-dependencies]
+whisper = ["faster-whisper>=1.2.1,<2"]
+
 [project.scripts]
 toolsapi-worker = "toolsapi_worker.cli:main"
 
