@@ -2,13 +2,13 @@
 
 Standalone worker runtime for Tornevall Networks ToolsAPI.
 
-The worker is intentionally generic. Whisper is the first workload, but the runtime is designed to execute any delegated ToolsAPI workload that has an explicit handler contract.
+The worker is intentionally generic. Whisper is the first workload, but the runtime is designed to execute delegated ToolsAPI workloads through explicit versioned contracts.
 
 ## Design principles
 
 - Workers pull work from ToolsAPI. ToolsAPI does not need inbound access to worker hosts.
 - Claiming is atomic and creates a lease.
-- A lease remains valid while the worker keeps reporting heartbeats/progress.
+- A lease remains valid while the worker keeps reporting heartbeat/progress.
 - Lease timeout is based on the latest accepted report, not the original claim time.
 - Stale leases become eligible for reassignment.
 - Late results from expired/superseded leases are rejected.
@@ -16,43 +16,33 @@ The worker is intentionally generic. Whisper is the first workload, but the runt
 - Workers do not require Laravel, direct database access, a shared filesystem or a checkout of the ToolsAPI repository.
 - ToolsAPI describes required workload contracts. It must not send arbitrary install commands or executable code to workers.
 
-## Reusing existing Tools functionality
-
-The worker should not duplicate business logic that belongs to ToolsAPI. Existing functionality is split by responsibility:
-
-- **ToolsAPI owns orchestration:** authentication, authorization, queueing, job metadata, storage, retries, notifications and persistence.
-- **Worker owns execution:** CPU/GPU-heavy or isolated processing performed by a versioned handler.
-- **Contracts connect them:** each job declares a handler and contract version; each worker advertises which handler versions and capabilities it supports.
-
-A worker claims a job only when its installed handler matches the required contract and capabilities. Dependencies are installed when the worker is deployed or upgraded, never dynamically from arbitrary job instructions.
-
-When reusable execution code exists in ToolsAPI, prefer extracting a stable contract or portable library/package rather than giving the worker runtime access to the full ToolsAPI repository. Cross-repository contract tests should detect incompatible changes.
-
 See [docs/architecture.md](docs/architecture.md) and [docs/contracts.md](docs/contracts.md).
 
-## Initial workload
+## Whisper runtime
 
-`whisper.transcribe`
+`whisper.transcribe` now has an executable serial worker lifecycle:
 
-The worker package now contains the ToolsAPI protocol client needed for the full network side of a remote transcription:
+1. Advertise supported contract/model/device capability to ToolsAPI.
+2. Claim one compatible job and receive lease id + generation.
+3. Download lease-bound Tools-hosted media into a per-job temporary directory.
+4. Run `faster-whisper` with the configured model/device/compute type.
+5. Report heartbeat independently from transcript segment production so a slow CPU/model load remains visibly alive.
+6. Report visible progress as segments are produced.
+7. Submit the transcript, segments and safe runtime metadata.
+8. Retry the exact same terminal submission after transient API failures until ToolsAPI acknowledges it or rejects the lease.
+9. Remove local temporary media after the ownership lifecycle ends.
 
-- claim a version 1 Whisper job
-- preserve lease id + generation
-- report heartbeat/progress
-- download Tools-hosted media with lease/generation headers
-- submit completed transcript text + segments + safe runtime metadata
-- submit structured retryable/non-retryable failures
-- treat HTTP 409 as ownership loss or terminal-payload conflict
+The initial executable runtime is deliberately serial (`TOOLS_WORKER_CONCURRENCY=1`). Parallel execution will be added only with dedicated ownership/lifecycle coverage.
 
-Terminal calls are deliberately retryable with the exact same payload so a lost HTTP acknowledgement does not force the worker to guess whether ToolsAPI persisted the result.
+Live polling also requires ToolsAPI to advertise `claim_policy_version >= 1`. If an older ToolsAPI deployment does not support capability-gated claims, the worker refuses to consume jobs. This makes deploy order safe.
 
-The production `run` loop remains disabled until the executable Whisper handler and terminal acknowledgement loop are complete and tested. The protocol client no longer blocks that work; the remaining part is local execution/lifecycle control.
+### Initial input scope
 
-Planned execution support includes `faster-whisper`, CPU/CUDA execution, model/capability advertisement and retranscription with a requested model.
+`TOOLS_WORKER_ACCEPTS_URL_SOURCES=false` is the default and recommended initial setting. Live remote execution is therefore limited to Tools-hosted upload/staged media. URL-source jobs stay on the local ToolsAPI runner until remote URL fetching is explicitly hardened and enabled. URL jobs that require speaker diarization remain local as well.
 
 ## Ubuntu installation
 
-Ubuntu is the primary host platform. The repository provides a Makefile and an idempotent system installer.
+Ubuntu is the primary host platform. The system installer installs the worker plus the `whisper` runtime extra (`faster-whisper>=1.2.1,<2`).
 
 ```bash
 git clone https://github.com/Tornevall/toolsApi-worker.git
@@ -60,15 +50,7 @@ cd toolsApi-worker
 sudo ./scripts/install.sh
 ```
 
-Or:
-
-```bash
-make install-system
-```
-
-The installer creates a dedicated `toolsapi-worker` system user, installs the Python package into `/opt/toolsapi-worker/.venv`, creates the runtime configuration directly in the installed project at `/opt/toolsapi-worker/.env`, installs a hardened systemd unit and enables it. It does not start a worker until a non-placeholder ToolsAPI URL and worker token exist.
-
-The runtime `.env` is created from the committed `.env.example` only when `/opt/toolsapi-worker/.env` does not already exist. Reinstall and deploy preserve the existing project `.env` and its secrets. The file is owned by `root:toolsapi-worker` with mode `0640`.
+The installer creates a dedicated `toolsapi-worker` system user, installs the package into `/opt/toolsapi-worker/.venv`, creates `/opt/toolsapi-worker/.env` when missing, installs the systemd unit and enables it. Existing project `.env` values are preserved on reinstall/deploy.
 
 After configuring `/opt/toolsapi-worker/.env`:
 
@@ -77,7 +59,28 @@ sudo systemctl restart toolsapi-worker
 sudo systemctl status toolsapi-worker
 ```
 
-Uninstall with `make uninstall`. The project `.env` is retained by default; set `REMOVE_CONFIG=true` only when the configuration should also be removed.
+## Configuration
+
+The committed template is `.env.example`. The real host configuration remains inside the installed project at `/opt/toolsapi-worker/.env`.
+
+Core settings:
+
+```text
+TOOLS_API_BASE_URL=https://tools.example.test
+TOOLS_WORKER_TOKEN=
+TOOLS_WORKER_ID=worker-01
+TOOLS_WORKER_CONCURRENCY=1
+TOOLS_WORKER_POLL_SECONDS=5
+TOOLS_WORKER_HEARTBEAT_SECONDS=30
+TOOLS_WORKER_ENABLED_HANDLERS=whisper.transcribe
+TOOLS_WORKER_WHISPER_MODELS=small
+TOOLS_WORKER_WHISPER_DEVICE=cpu
+TOOLS_WORKER_WHISPER_COMPUTE_TYPE=int8
+TOOLS_WORKER_ACCEPTS_URL_SOURCES=false
+TOOLS_WORKER_TEMP_ROOT=/tmp/toolsapi-worker
+```
+
+For a CUDA worker, set device/compute type according to the installed host runtime, for example `TOOLS_WORKER_WHISPER_DEVICE=cuda` and an appropriate `faster-whisper` compute type. The worker advertises these values to ToolsAPI but ToolsAPI remains the authority that decides whether a job is eligible.
 
 ## Development and tests
 
@@ -87,30 +90,25 @@ make check
 make smoke-install
 ```
 
-`make check` runs compile/import sanity checks and unit tests. `make smoke-install` installs the package into an isolated virtual environment and verifies the CLI. Worker protocol tests mock ToolsAPI HTTP responses so credentials are never required in CI.
+Protocol/runtime unit tests do not require loading a real Whisper model. The system-install GitHub Actions jobs exercise the actual installer, including the production `whisper` dependency extra.
 
-## CI and installation testing
-
-GitHub Actions runs on Ubuntu 22.04 and Ubuntu 24.04. CI tests Python 3.10, 3.11 and 3.12, repository/documentation requirements, unit tests, isolated package installation and the actual root/systemd installer. The system installer is run twice to verify idempotency and `/opt/toolsapi-worker/.env` preservation, then uninstalled while confirming the same project configuration remains intact.
+CI runs on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus root/systemd install-reinstall-uninstall coverage.
 
 ## Deployment
 
-`.github/workflows/deploy.yml` supports manual deployment through `workflow_dispatch`. Automatic deployment after a push to `main` is enabled only when repository/environment variable `WORKER_AUTODEPLOY` is set to `true`.
+`.github/workflows/deploy.yml` supports manual deployment through `workflow_dispatch`. Automatic deployment after a push to `main` is enabled only when repository/environment variable `WORKER_AUTODEPLOY` is `true`.
 
-Deployment uses the GitHub `production` Environment and expects these secrets:
+Deploy ToolsAPI capability-gated claim support before enabling/deploying this executable worker runtime. The worker contains an additional runtime guard and will refuse live claims from an older ToolsAPI deployment.
 
-- `WORKER_DEPLOY_HOST`
-- `WORKER_DEPLOY_USER`
-- `WORKER_DEPLOY_PORT` (optional, defaults to 22)
-- `WORKER_DEPLOY_SSH_KEY`
+## Security
 
-The remote host checks out the exact commit SHA and reruns the idempotent installer. Existing `/opt/toolsapi-worker/.env` configuration is preserved. Production Environment protection rules can be used to require approval before deployment.
-
-## Configuration
-
-`.env.example` is the committed template. The real host configuration is `/opt/toolsapi-worker/.env`, inside the installed project directory. Secrets must never be committed. Local development `.env` files are ignored by Git.
-
-`TOOLS_API_BASE_URL`, `TOOLS_WORKER_TOKEN` and `TOOLS_WORKER_ID` identify the ToolsAPI endpoint and dedicated worker credential. The configured token must correspond to a revocable ToolsAPI `provider_whisper_worker` credential whose name matches the worker id.
+- Dedicated revocable worker credentials only.
+- No direct database access.
+- Lease/generation validation for media, progress and terminal calls.
+- No lease/token embedded in media URLs.
+- No worker bearer token in raised API errors.
+- No live URL-source fetching by default.
+- Temporary media isolated per job.
 
 ## Agent/development rules
 
@@ -122,11 +120,6 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 
 ## Related work
 
-- `Tornevall/toolsApi#468` - Whisper retranscription with another model
 - `Tornevall/toolsApi#469` - Remote Whisper worker support
-- `Tornevall/toolsApi#471` - Standalone worker repository planning
-- `Tornevall/toolsApi#701` - ToolsAPI claim/lease/progress bridge
-- `Tornevall/toolsApi#703` - ToolsAPI media + terminal protocol
-- `Tornevall/toolsApi-worker#1` - Worker bootstrap
-- `Tornevall/toolsApi-worker#3` - Whisper claim/progress client
-- `Tornevall/toolsApi-worker#5` - Media/terminal/runtime worker work
+- `Tornevall/toolsApi#710` - Capability/post-processing claim gate
+- `Tornevall/toolsApi-worker#5` - Executable Whisper runtime
