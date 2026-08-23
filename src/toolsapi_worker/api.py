@@ -81,6 +81,11 @@ class ToolsApiClient:
                 "accepts_url_sources": bool(accepts_url_sources),
             },
         )
+        if int(payload.get("claim_policy_version") or 0) < 1:
+            raise WorkerApiError(
+                "ToolsAPI does not advertise the capability-gated Whisper claim policy; refusing live work"
+            )
+
         job = payload.get("job")
         if job is None:
             return None
