@@ -33,7 +33,7 @@ class LeaseHeartbeat:
     ) -> None:
         self.client = client
         self.claim = claim
-        self.interval_seconds = max(5.0, interval_seconds)
+        self.interval_seconds = max(0.05, interval_seconds)
         self.state = HeartbeatState()
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -218,7 +218,6 @@ class WorkerRuntime:
         temp_root.mkdir(parents=True, exist_ok=True)
         job_dir = Path(tempfile.mkdtemp(prefix=f"job-{claim.job_id}-", dir=temp_root))
         heartbeat = LeaseHeartbeat(self.client, claim, self.config.heartbeat_seconds)
-        terminal_acknowledged = False
         heartbeat.start()
 
         try:
@@ -237,9 +236,7 @@ class WorkerRuntime:
                     result.runtime,
                 )
             )
-            terminal_acknowledged = True
         except WorkerLeaseLostError:
-            terminal_acknowledged = True
             raise
         except Exception as exc:
             heartbeat.stop()
@@ -251,11 +248,9 @@ class WorkerRuntime:
                     retryable=True,
                 )
             )
-            terminal_acknowledged = True
         finally:
             heartbeat.stop()
-            if terminal_acknowledged:
-                shutil.rmtree(job_dir, ignore_errors=True)
+            shutil.rmtree(job_dir, ignore_errors=True)
 
     def _prepare_input(self, claim: WhisperClaim, job_dir: Path) -> Path:
         if claim.input_type == "tools_media":
