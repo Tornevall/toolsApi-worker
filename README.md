@@ -52,18 +52,18 @@ Or:
 make install-system
 ```
 
-The installer creates a dedicated `toolsapi-worker` system user, installs the Python package into `/opt/toolsapi-worker/.venv`, creates the host runtime configuration at `/etc/toolsapi-worker/.env`, symlinks `/opt/toolsapi-worker/.env` to that canonical file, installs a hardened systemd unit and enables it. It does not start a worker until a non-placeholder ToolsAPI URL and worker token exist.
+The installer creates a dedicated `toolsapi-worker` system user, installs the Python package into `/opt/toolsapi-worker/.venv`, creates the runtime configuration directly in the installed project at `/opt/toolsapi-worker/.env`, installs a hardened systemd unit and enables it. It does not start a worker until a non-placeholder ToolsAPI URL and worker token exist.
 
-The runtime `.env` is created from the committed `.env.example` only when `/etc/toolsapi-worker/.env` does not already exist. Reinstall and deploy must preserve the existing host `.env` and its secrets. The file is owned by `root:toolsapi-worker` with mode `0640`.
+The runtime `.env` is created from the committed `.env.example` only when `/opt/toolsapi-worker/.env` does not already exist. Reinstall and deploy preserve the existing project `.env` and its secrets. The file is owned by `root:toolsapi-worker` with mode `0640`.
 
-After configuring `/etc/toolsapi-worker/.env`:
+After configuring `/opt/toolsapi-worker/.env`:
 
 ```bash
 sudo systemctl restart toolsapi-worker
 sudo systemctl status toolsapi-worker
 ```
 
-Uninstall with `make uninstall`. Configuration is retained by default.
+Uninstall with `make uninstall`. The project `.env` is retained by default; set `REMOVE_CONFIG=true` only when the configuration should also be removed.
 
 ## Development and tests
 
@@ -77,7 +77,7 @@ make smoke-install
 
 ## CI and installation testing
 
-GitHub Actions runs on Ubuntu 22.04 and Ubuntu 24.04. CI tests Python 3.10, 3.11 and 3.12, repository/documentation requirements, unit tests, isolated package installation and the actual root/systemd installer. The system installer is run twice to verify idempotency and `.env` preservation, then uninstalled while confirming configuration retention.
+GitHub Actions runs on Ubuntu 22.04 and Ubuntu 24.04. CI tests Python 3.10, 3.11 and 3.12, repository/documentation requirements, unit tests, isolated package installation and the actual root/systemd installer. The system installer is run twice to verify idempotency and `/opt/toolsapi-worker/.env` preservation, then uninstalled while confirming the same project configuration remains intact.
 
 ## Deployment
 
@@ -90,11 +90,11 @@ Deployment uses the GitHub `production` Environment and expects these secrets:
 - `WORKER_DEPLOY_PORT` (optional, defaults to 22)
 - `WORKER_DEPLOY_SSH_KEY`
 
-The remote host checks out the exact commit SHA and reruns the idempotent installer. Existing `/etc/toolsapi-worker/.env` configuration is preserved. Production Environment protection rules can be used to require approval before deployment.
+The remote host checks out the exact commit SHA and reruns the idempotent installer. Existing `/opt/toolsapi-worker/.env` configuration is preserved. Production Environment protection rules can be used to require approval before deployment.
 
 ## Configuration
 
-`.env.example` is the committed template. The real host configuration is `/etc/toolsapi-worker/.env`, also exposed to the installed application as `/opt/toolsapi-worker/.env` through a symlink. Secrets must never be committed. Local development `.env` files are ignored by Git.
+`.env.example` is the committed template. The real host configuration is `/opt/toolsapi-worker/.env`, inside the installed project directory. Secrets must never be committed. Local development `.env` files are ignored by Git.
 
 ## Agent/development rules
 
