@@ -12,6 +12,7 @@ from .api import (
     ToolsApiClient,
     WhisperClaim,
     WorkerApiError,
+    WorkerAuthenticationError,
     WorkerLeaseLostError,
 )
 from .config import WorkerConfig
@@ -202,16 +203,27 @@ class WorkerRuntime:
     def run_forever(self) -> None:
         self.config.validate_protocol_configuration()
         while True:
-            claim = self.client.claim_whisper(
-                models=self.config.whisper_models,
-                device=self.config.whisper_device,
-                compute_type=self.config.whisper_compute_type,
-                accepts_url_sources=self.config.accepts_url_sources,
-            )
+            try:
+                claim = self.client.claim_whisper(
+                    models=self.config.whisper_models,
+                    device=self.config.whisper_device,
+                    compute_type=self.config.whisper_compute_type,
+                    accepts_url_sources=self.config.accepts_url_sources,
+                )
+            except WorkerAuthenticationError:
+                raise
+            except WorkerApiError:
+                self.sleep(self.config.poll_seconds)
+                continue
+
             if claim is None:
                 self.sleep(self.config.poll_seconds)
                 continue
-            self.process_claim(claim)
+
+            try:
+                self.process_claim(claim)
+            except WorkerLeaseLostError:
+                continue
 
     def process_claim(self, claim: WhisperClaim) -> None:
         temp_root = Path(self.config.temp_root)
