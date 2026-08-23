@@ -13,8 +13,8 @@ All notable changes to toolsApi-worker are documented here.
 - Initial `whisper.transcribe` workload direction.
 - Documentation requirements and CI validation baseline.
 - Ubuntu installer, Makefile, systemd service, installer smoke tests and guarded deployment workflow.
-- Canonical host runtime `.env` at `/etc/toolsapi-worker/.env`, exposed to the installed application through `/opt/toolsapi-worker/.env`.
-- CI verification that reinstall/deploy preserves existing `.env` values.
+- Canonical runtime `.env` in the installed project directory at `/opt/toolsapi-worker/.env`.
+- CI verification that reinstall/deploy preserves existing project `.env` values and that uninstall retains configuration by default.
 
 ### Security
 
