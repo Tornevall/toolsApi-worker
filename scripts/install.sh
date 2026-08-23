@@ -25,7 +25,7 @@ fi
 install -d -m 0755 "${PREFIX}"
 "${PYTHON}" -m venv "${PREFIX}/.venv"
 "${PREFIX}/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
-"${PREFIX}/.venv/bin/python" -m pip install "${SOURCE_DIR}"
+"${PREFIX}/.venv/bin/python" -m pip install "${SOURCE_DIR}[whisper]"
 
 # Keep the canonical runtime .env in the installed project directory.
 # Reinstall and deploy must preserve host-specific credentials and configuration.
