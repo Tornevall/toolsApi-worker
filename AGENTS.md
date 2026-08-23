@@ -30,9 +30,10 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 
 - `.env.example` is the committed configuration template.
 - A real host `.env` must be created during installation when missing.
-- The canonical production runtime configuration is `/etc/toolsapi-worker/.env`.
-- `/opt/toolsapi-worker/.env` may expose that file through a symlink for normal application discovery.
+- The canonical production runtime configuration lives in the installed project directory at `/opt/toolsapi-worker/.env` by default, or `${PREFIX}/.env` when a custom prefix is used.
+- Do not move the worker runtime `.env` into `/etc` or another external configuration directory.
 - Install, reinstall and deploy must preserve an existing runtime `.env` and its values.
+- Uninstall preserves the project `.env` by default unless explicit configuration removal is requested.
 - Never commit `.env`, credentials, worker tokens or deployment secrets.
 
 ## Testing
