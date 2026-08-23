@@ -51,10 +51,10 @@ jobs:
           cd "$TMP/repo"
           git checkout --detach "$SHA"
           sudo ./scripts/install.sh
-          ENV_FILE=/etc/toolsapi-worker/.env
-          if grep -Eq '^TOOLS_WORKER_TOKEN=.+$' "$ENV_FILE" \
-             && grep -Eq '^TOOLS_API_BASE_URL=https?://.+' "$ENV_FILE" \
-             && ! grep -q '^TOOLS_API_BASE_URL=https://tools.example.test$' "$ENV_FILE"; then
+          ENV_FILE=/opt/toolsapi-worker/.env
+          if sudo grep -Eq '^TOOLS_WORKER_TOKEN=.+$' "$ENV_FILE" \
+             && sudo grep -Eq '^TOOLS_API_BASE_URL=https?://.+' "$ENV_FILE" \
+             && ! sudo grep -q '^TOOLS_API_BASE_URL=https://tools.example.test$' "$ENV_FILE"; then
             sudo systemctl restart toolsapi-worker.service
             sudo systemctl --no-pager --full status toolsapi-worker.service
           else
