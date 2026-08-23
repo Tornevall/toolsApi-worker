@@ -1,6 +1,5 @@
 PYTHON ?= python3
 PREFIX ?= /opt/toolsapi-worker
-CONFIG_DIR ?= /etc/toolsapi-worker
 SERVICE_NAME ?= toolsapi-worker
 
 .PHONY: help install install-system test lint check package smoke-install uninstall
