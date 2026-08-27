@@ -37,6 +37,10 @@ jobs:
         run: python -m pip install .
       - name: Run checks
         run: make check
+      - name: Run worker protocol dry-run
+        run: |
+          toolsapi-worker dry-run
+          toolsapi-worker dry-run --json | python -c 'import json,sys; data=json.load(sys.stdin); assert data["ok"]; assert all(data["checks"].values())'
       - name: Smoke-test isolated install
         run: make smoke-install
 
@@ -54,6 +58,7 @@ jobs:
       - name: Verify installed CLI, .env and systemd unit
         run: |
           /opt/toolsapi-worker/.venv/bin/toolsapi-worker status
+          /opt/toolsapi-worker/.venv/bin/toolsapi-worker dry-run
           systemctl is-enabled toolsapi-worker.service
           sudo test -f /opt/toolsapi-worker/.env
           test -f /etc/systemd/system/toolsapi-worker.service
