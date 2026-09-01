@@ -97,6 +97,7 @@ class PyannoteDiarizer:
                 "speaker_count": len(labels),
                 "labelled_segment_count": labelled_count,
                 "hf_token_present": bool(self.config.diarization_hf_token),
+                "device": self._resolved_device(),
             }
         except WorkerLeaseLostError:
             raise
@@ -167,18 +168,37 @@ class PyannoteDiarizer:
         except TypeError:
             return pipeline_class.from_pretrained(source, use_auth_token=token)
 
-    def _move_pipeline(self, pipeline: Any) -> Any:
-        device = self.config.diarization_device
-        if device == "auto":
-            torch = self._torch()
-            device = "cuda" if bool(getattr(torch.cuda, "is_available", lambda: False)()) else "cpu"
+    def _resolved_device(self) -> str:
+        configured = self.config.diarization_device
+        if configured != "auto":
+            return configured
 
+        torch = self._torch()
+        cuda = getattr(torch, "cuda", None)
+        if cuda is not None and bool(getattr(cuda, "is_available", lambda: False)()):
+            return "cuda"
+
+        backends = getattr(torch, "backends", None)
+        mps = getattr(backends, "mps", None) if backends is not None else None
+        if mps is not None and bool(getattr(mps, "is_available", lambda: False)()):
+            return "mps"
+
+        return "cpu"
+
+    def _move_pipeline(self, pipeline: Any) -> Any:
+        device = self._resolved_device()
         if device == "cpu":
             return pipeline
 
         torch = self._torch()
-        if device == "cuda" and not bool(getattr(torch.cuda, "is_available", lambda: False)()):
+        if device == "cuda" and not bool(getattr(getattr(torch, "cuda", None), "is_available", lambda: False)()):
             raise RuntimeError("CUDA diarization was requested but CUDA is unavailable on this worker.")
+        if device in {"mps", "metal"}:
+            backends = getattr(torch, "backends", None)
+            mps = getattr(backends, "mps", None) if backends is not None else None
+            if mps is None or not bool(getattr(mps, "is_available", lambda: False)()):
+                raise RuntimeError("MPS diarization was requested but Apple GPU acceleration is unavailable on this worker.")
+            device = "mps"
         if hasattr(pipeline, "to"):
             pipeline.to(torch.device(device))
         return pipeline
@@ -229,6 +249,8 @@ class PyannoteDiarizer:
             return "missing_model", "Configured speaker diarization model directory does not exist."
         if "cuda" in lowered and "unavailable" in lowered:
             return "device_unavailable", "Requested CUDA diarization is unavailable on this worker."
+        if ("mps" in lowered or "apple gpu" in lowered) and "unavailable" in lowered:
+            return "device_unavailable", "Requested Apple GPU diarization is unavailable on this worker."
         if any(value in lowered for value in ["timed out", "timeout", "connection error", "network is unreachable", "local cache"]):
             return "model_network_unavailable", "Speaker diarization model is not available locally and could not be fetched."
         if any(value in lowered for value in ["401", "403", "gated repo", "access denied", "accept the conditions"]):
