@@ -31,8 +31,10 @@ class FakeClient:
         path.write_bytes(b"fake media")
         return path
 
-    def complete_whisper(self, claim, transcript_text, segments=None, runtime=None):
-        self.complete_calls.append((claim, transcript_text, list(segments or []), dict(runtime or {})))
+    def complete_whisper(self, claim, transcript_text, segments=None, runtime=None, diarization=None):
+        self.complete_calls.append(
+            (claim, transcript_text, list(segments or []), dict(runtime or {}), dict(diarization or {}))
+        )
         if self.complete_failures_remaining > 0:
             self.complete_failures_remaining -= 1
             raise WorkerApiError("temporary network failure")
@@ -61,6 +63,29 @@ class SlowHandler:
         )
 
 
+class FakeDiarizer:
+    supported = True
+
+    def __init__(self, status="completed"):
+        self.status = status
+        self.calls = []
+
+    def diarize(self, claim, input_path, segments, heartbeat):
+        self.calls.append((claim.job_id, str(input_path), list(segments)))
+        heartbeat.update(98, "Speaker diarization", "Synthetic diarization")
+        labelled = [dict(segment, speaker_label="SPEAKER_00") for segment in segments]
+        return labelled, {
+            "requested": True,
+            "status": self.status,
+            "provider": "pyannote",
+            "speaker_count": 1 if self.status == "completed" else 0,
+            "speaker_turns": [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}]
+            if self.status == "completed"
+            else [],
+            "hf_token_present": True,
+        }
+
+
 class WorkerRuntimeTest(unittest.TestCase):
     def config(self, temp_root, heartbeat_seconds=0.05, device="cpu", compute_type="int8", models=("small",)):
         return WorkerConfig(
@@ -75,20 +100,28 @@ class WorkerRuntimeTest(unittest.TestCase):
             whisper_device=device,
             whisper_compute_type=compute_type,
             accepts_url_sources=False,
+            diarization_enabled=True,
+            diarization_provider="pyannote",
+            diarization_hf_token="hf_test_only",
+            diarization_model="pyannote/speaker-diarization-community-1",
+            diarization_model_dir="",
+            diarization_min_speakers=None,
+            diarization_max_speakers=None,
+            diarization_device="cpu",
             temp_root=str(temp_root),
         )
 
-    def claim(self, model="small"):
+    def claim(self, model="small", diarization_requested=True):
         return WhisperClaim(
             job_id=123,
             lease_id="lease-abc",
             generation=2,
             contract="whisper.transcribe",
-            contract_version=1,
-            lease_expires_at="2026-08-23T14:30:00+00:00",
+            contract_version=2,
+            lease_expires_at="2026-09-01T14:30:00+00:00",
             model=model,
             language="sv",
-            diarization_requested=True,
+            diarization_requested=diarization_requested,
             input={"type": "tools_media", "download_url": "https://tools.example.test/api/whisper/worker/jobs/123/media"},
         )
 
@@ -103,20 +136,23 @@ class WorkerRuntimeTest(unittest.TestCase):
         self.assertGreaterEqual(len(client.progress_calls), 2)
         self.assertTrue(all(call[1] == 40 for call in client.progress_calls))
 
-    def test_completed_job_retries_terminal_ack_and_cleans_temp_media(self):
+    def test_completed_job_runs_diarization_before_terminal_ack_and_cleans_temp_media(self):
         with tempfile.TemporaryDirectory() as root:
             client = FakeClient()
             client.complete_failures_remaining = 1
             sleeps = []
+            diarizer = FakeDiarizer()
             runtime = WorkerRuntime(
                 self.config(root),
                 client=client,
                 handler=SlowHandler(delay=0.01),
+                diarizer=diarizer,
                 sleep=lambda seconds: sleeps.append(seconds),
             )
 
             runtime.process_claim(self.claim())
 
+            self.assertEqual(1, len(diarizer.calls))
             self.assertEqual(2, len(client.complete_calls))
             self.assertEqual([0.01], sleeps)
             self.assertEqual([], client.fail_calls)
@@ -124,6 +160,26 @@ class WorkerRuntimeTest(unittest.TestCase):
             first = client.complete_calls[0]
             second = client.complete_calls[1]
             self.assertEqual(first[1:], second[1:])
+            self.assertEqual("SPEAKER_00", first[2][0]["speaker_label"])
+            self.assertEqual("completed", first[4]["status"])
+
+    def test_non_diarization_job_skips_diarizer(self):
+        with tempfile.TemporaryDirectory() as root:
+            client = FakeClient()
+            diarizer = FakeDiarizer()
+            runtime = WorkerRuntime(
+                self.config(root),
+                client=client,
+                handler=SlowHandler(delay=0.01),
+                diarizer=diarizer,
+                sleep=lambda seconds: None,
+            )
+
+            runtime.process_claim(self.claim(diarization_requested=False))
+
+            self.assertEqual([], diarizer.calls)
+            self.assertEqual("skipped", client.complete_calls[0][4]["status"])
+            self.assertFalse(client.complete_calls[0][4]["requested"])
 
     def test_handler_failure_is_reported_and_temp_media_is_cleaned(self):
         with tempfile.TemporaryDirectory() as root:
@@ -132,6 +188,7 @@ class WorkerRuntimeTest(unittest.TestCase):
                 self.config(root),
                 client=client,
                 handler=SlowHandler(delay=0.01, fail=True),
+                diarizer=FakeDiarizer(),
                 sleep=lambda seconds: None,
             )
 
@@ -145,7 +202,7 @@ class WorkerRuntimeTest(unittest.TestCase):
     def test_url_source_is_not_executed_when_runtime_has_url_support_disabled(self):
         with tempfile.TemporaryDirectory() as root:
             client = FakeClient()
-            claim = self.claim()
+            claim = self.claim(diarization_requested=False)
             claim = WhisperClaim(
                 job_id=claim.job_id,
                 lease_id=claim.lease_id,
@@ -162,6 +219,7 @@ class WorkerRuntimeTest(unittest.TestCase):
                 self.config(root),
                 client=client,
                 handler=SlowHandler(delay=0.01),
+                diarizer=FakeDiarizer(),
                 sleep=lambda seconds: None,
             )
 
