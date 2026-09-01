@@ -43,7 +43,7 @@ All notable changes to toolsApi-worker are documented here.
 
 - `whisper.transcribe` is now contract version 2 and requires ToolsAPI `claim_policy_version >= 2`, preventing older workers/servers from silently consuming diarization-required jobs.
 - Speaker diarization is enabled by default in worker configuration, can be explicitly disabled with `TOOLS_WORKER_DIARIZATION_ENABLED=false`, and uses `pyannote/speaker-diarization-community-1`.
-- Diarization capability advertisement now verifies that the installed pyannote and PyTorch runtimes are available before the worker may claim diarization-required jobs.
+- Diarization capability advertisement now verifies both the installed pyannote/PyTorch runtime and the configured execution device; an explicit CUDA or Apple GPU device is not advertised when PyTorch cannot use it.
 - Pyannote `auto` device selection prefers CUDA, then Apple MPS, then CPU.
 - Fresh Windows installs automatically select CUDA/fp16 for Whisper and CUDA for diarization when native `nvidia-smi.exe` is available; existing `.env` values remain authoritative.
 - Explicit Windows `cuda` configuration no longer permits silent CPU fallback. CTranslate2 must see a native CUDA device and PyTorch must report CUDA availability for enabled CUDA diarization.
