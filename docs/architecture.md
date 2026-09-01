@@ -71,3 +71,5 @@ ToolsAPI must not remotely instruct workers to install arbitrary packages or exe
 ## First workload
 
 The initial handler is `whisper.transcribe`. ToolsAPI keeps the canonical audio and transcript records; the worker performs the transcription execution and returns structured transcript data and runtime metadata.
+
+Execution is platform-specific behind the same worker lifecycle. CPU/CUDA workers use `faster-whisper`; Apple Silicon macOS workers use `mlx-whisper`. Backend selection never changes lease ownership, heartbeat, retry or terminal acknowledgement rules.
