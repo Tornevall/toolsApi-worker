@@ -10,8 +10,8 @@ The live `whisper.transcribe` claim request advertises the worker execution capa
 {
   "contract_version": 2,
   "models": ["small", "medium"],
-  "device": "cpu",
-  "compute_type": "int8",
+  "device": "cuda",
+  "compute_type": "float16",
   "accepts_url_sources": false,
   "supports_diarization": true
 }
@@ -24,6 +24,8 @@ The current worker runtime defaults to `accepts_url_sources=false`, so live exec
 A successful claim response must include `claim_policy_version >= 2`. Workers enabling live polling refuse claims from older ToolsAPI deployments that do not advertise the diarization-aware capability gate. This protects deployment order: an old server cannot assign a requested diarization job to a worker without checking capability.
 
 The `device` and `compute_type` values describe the installed Whisper backend. CPU/CUDA values select `faster-whisper`; Apple Silicon workers advertise a Metal/MLX device value and use `mlx-whisper`. Speaker diarization remains pyannote-based on all supported platforms and has its own device selection.
+
+On Windows, `device=cuda` means native Windows CUDA. WSL is not part of the worker runtime. The installer validates that CTranslate2 can see the NVIDIA GPU before a CUDA-configured Windows service is allowed to start. When diarization is also configured for CUDA, PyTorch must independently report `torch.cuda.is_available()`.
 
 ## Whisper claim
 
@@ -82,6 +84,8 @@ Workers send progress through:
 
 The production runtime reports heartbeat independently of transcript production and diarization progress. Slow Whisper or pyannote model loading can therefore keep the lease alive even while visible progress is unchanged. An accepted update refreshes the lease and the shared Whisper runtime heartbeat used by web/mobile polling.
 
+The worker host itself is a continuously running service/daemon around this poll loop. Windows uses a native Windows service, Linux uses systemd and macOS uses launchd. Task Scheduler is not the worker execution model.
+
 ## Completion
 
 Workers submit completed transcripts through:
@@ -103,8 +107,8 @@ Workers submit completed transcripts through:
   ],
   "runtime": {
     "engine": "faster-whisper",
-    "device": "cpu",
-    "compute_type": "int8"
+    "device": "cuda",
+    "compute_type": "float16"
   },
   "diarization": {
     "requested": true,
@@ -154,9 +158,11 @@ Temporary job media is isolated in a per-job directory and removed only when pro
 
 ## Runtime dependency
 
-Linux and Windows CPU/CUDA production installation uses the `whisper` package extra with `faster-whisper>=1.2.1,<2`, `pyannote.audio>=4,<5` and PyTorch. Apple Silicon macOS production installation uses the `whisper-mlx` package extra with `mlx-whisper>=0.4.3,<0.5`, `pyannote.audio>=4,<5` and PyTorch.
+Linux and native Windows CPU/CUDA production installation uses the `whisper` package extra with `faster-whisper>=1.2.1,<2`, `pyannote.audio>=4,<5` and PyTorch. Apple Silicon macOS production installation uses the `whisper-mlx` package extra with `mlx-whisper>=0.4.3,<0.5`, `pyannote.audio>=4,<5` and PyTorch.
 
-Python 3.10 or newer is required on every supported platform. Windows background installation is PowerShell-based and does not require an interactive `cmd.exe` runtime. Both Whisper and pyannote modules are imported lazily so protocol-only deterministic tests do not require model loading or live Hugging Face access.
+Current faster-whisper/CTranslate2 CUDA execution requires CUDA 12 cuBLAS and cuDNN 9. Windows must expose the required native DLL directories through the service environment. A CUDA-enabled PyTorch build is independently required for pyannote CUDA execution. Explicit CUDA configuration is fail-closed rather than silently falling back to CPU.
+
+Python 3.10 or newer is required on every supported platform. Windows service installation is PowerShell-based and does not require WSL or an interactive `cmd.exe` runtime. Both Whisper and pyannote modules are imported lazily so protocol-only deterministic tests do not require model loading or live Hugging Face access.
 
 ## Compatibility
 
