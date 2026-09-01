@@ -28,6 +28,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 - Live Whisper execution requires a capability-gated ToolsAPI claim policy. Refuse live work when the server does not advertise the required `claim_policy_version`.
 - `whisper.transcribe` contract version 2 is diarization-aware. Workers must advertise `supports_diarization`; a worker that cannot run speaker diarization must never advertise that capability merely to receive work.
 - A claim with `diarization_requested=true` must run worker-side diarization before the completion payload is submitted. Do not silently defer a v2 diarization request back to ToolsAPI.
+- `operation=diarize` is diarization-only work against retained media for an already completed transcript. It must never run Whisper, submit transcript text/segments through transcript completion, or turn the existing transcript into a failed transcript job.
 - Worker completion may report a diarization failure independently while preserving a successful transcript. Do not convert a completed Whisper transcript into a transcription failure merely because diarization failed.
 - Never expose a Hugging Face token value in progress, terminal payloads, logs or error messages. A boolean token-presence diagnostic is allowed.
 - URL-source execution must remain disabled unless the worker explicitly advertises support and the implementation has appropriate URL/network safety. Default to Tools-hosted lease-bound media.
@@ -78,6 +79,7 @@ Tests should cover at minimum when relevant:
 - worker restart does not invent ownership
 - capability/contract mismatches are not claimed
 - diarization-required work is not claimed unless the worker advertises diarization support
+- diarization-only claims never run Whisper and cannot submit or fail the existing transcript
 - a successful diarization maps speaker labels onto segments and submits safe structured metadata
 - a diarization failure preserves the transcript and never exposes the Hugging Face token value
 - explicit CUDA configuration does not silently fall back to CPU
