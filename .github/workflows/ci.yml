@@ -36,6 +36,7 @@ jobs:
           test -s scripts/install-windows.ps1
           test -s scripts/uninstall-windows.ps1
           test -s scripts/smoke-install.sh
+          test -s src/toolsapi_worker/windows_service.py
           test -s packaging/systemd/toolsapi-worker.service
           test -s packaging/launchd/net.tornevall.toolsapi-worker.plist
       - name: Install package
@@ -53,10 +54,14 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - name: Install protocol package without model runtimes
-        run: python -m pip install .
+      - name: Install protocol and Windows service package
+        run: python -m pip install ".[windows]"
       - name: Run deterministic worker tests
         run: python -m unittest discover -s tests -v
+      - name: Validate native Windows service module
+        run: |
+          python -m py_compile src/toolsapi_worker/windows_service.py
+          python -c "import toolsapi_worker.windows_service as service; assert service.SERVICE_NAME == 'ToolsAPIWorker'"
       - name: Parse Windows installer scripts
         shell: pwsh
         run: |
@@ -66,6 +71,12 @@ jobs:
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/uninstall-windows.ps1), [ref]$null, [ref]$errors) | Out-Null
           if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error }
+          $install = Get-Content scripts/install-windows.ps1 -Raw
+          if ($install -match 'ScheduledTask|New-ScheduledTask|Register-ScheduledTask') { throw 'Windows worker must run as a service, not Task Scheduler.' }
+          if ($install -notmatch 'ToolsAPIWorker') { throw 'Windows service name is missing from installer.' }
+          if ($install -notmatch 'nvidia-smi\.exe') { throw 'Native NVIDIA detection is missing from installer.' }
+          if ($install -notmatch 'get_cuda_device_count') { throw 'CTranslate2 CUDA validation is missing from installer.' }
+          if ($install -notmatch 'torch\.cuda\.is_available') { throw 'PyTorch CUDA validation is missing from installer.' }
 
   macos-install:
     runs-on: macos-14
