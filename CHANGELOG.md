@@ -23,6 +23,7 @@ All notable changes to toolsApi-worker are documented here.
 - Native Windows service support through pywin32. The service continuously runs the normal polling loop and does not depend on Task Scheduler, WSL or an interactive CMD session.
 - Native Windows NVIDIA detection and fail-closed CUDA validation for both CTranslate2/faster-whisper and PyTorch/pyannote before a CUDA-configured service starts.
 - Optional Windows installer `-TorchIndexUrl` support for installing the official CUDA-enabled PyTorch wheel channel appropriate for the host.
+- Windows GPU policy helpers and deterministic Windows regression coverage for Pascal compute capability 6.1, modern fp16-capable GPUs, automatic CUDA 12.6 PyTorch selection for Maxwell/Pascal/Volta and explicit PyTorch index overrides.
 - Windows CI coverage for deterministic protocol/runtime tests, Windows service module import/compile checks and PowerShell installer syntax/content validation.
 - Per-user macOS launchd installer and uninstaller with configuration preservation.
 - PEP 668-safe local installation through an isolated project virtual environment.
@@ -31,7 +32,7 @@ All notable changes to toolsApi-worker are documented here.
 - Independent heartbeat reporting while model loading, transcription or diarization is slow, so liveness does not depend on new transcript segments.
 - Capability-aware claim advertisement for supported models, device, compute type, URL-source support and diarization support.
 - Per-job temporary media isolation and cleanup after acknowledged terminal state or lease loss.
-- Terminal acknowledgement retry that keeps the worker slot occupied and retries the exact same payload after transient API failures.
+- Terminal acknowledgement retry that keeps the worker slot occupied and retries the exact same payload after transient API failures until ToolsAPI acknowledges it or rejects the lease.
 - Worker protocol handling that preserves lease id/generation and treats HTTP 409 as loss of ownership or terminal-payload conflict.
 - Regression coverage for protocol, runtime heartbeat, terminal retry, temp cleanup, diarization, GPU preference, configuration and installer behavior.
 - Deterministic regression coverage proving the lease heartbeat continues while diarization itself is blocked.
@@ -49,8 +50,12 @@ All notable changes to toolsApi-worker are documented here.
 - Diarization capability advertisement now verifies both the installed pyannote/PyTorch runtime and the configured execution device; an explicit CUDA or Apple GPU device is not advertised when PyTorch cannot use it.
 - Explicit accelerator configuration is revalidated on every worker process start before the first claim, so preserved `.env` changes, driver/library changes, or CPU-only PyTorch/CTranslate2 builds cannot cause a worker to advertise and consume GPU work it cannot execute.
 - Pyannote `auto` device selection prefers CUDA, then Apple MPS, then CPU.
-- Fresh Windows installs automatically select CUDA/fp16 for Whisper and CUDA for diarization when native `nvidia-smi.exe` is available; existing `.env` values remain authoritative.
-- Explicit Windows `cuda` configuration no longer permits silent CPU fallback. CTranslate2 must see a native CUDA device and PyTorch must report CUDA availability for enabled CUDA diarization.
+- Fresh Windows NVIDIA installs no longer hard-code `float16`. The installer queries CTranslate2's actual CUDA compute-type capability and selects the best supported worker type in priority order `float16`, `int8_float16`, `int8_float32`, then `float32`; Pascal GPUs such as GTX 1060 can therefore use `int8_float32` instead of being rejected by the old fp16-only preflight.
+- Existing Windows `.env` values remain authoritative. An explicitly configured CUDA compute type that the GPU does not support now fails with the exact supported-type list instead of being misreported as a missing CUDA installation.
+- Windows GPU diagnostics now distinguish NVIDIA driver visibility from the CUDA 12 cuBLAS/cuDNN 9 runtime required by current CTranslate2/faster-whisper. The maximum CUDA version printed by `nvidia-smi` is no longer treated as the worker runtime version.
+- Native Windows pyannote setup automatically uses the official PyTorch CUDA 12.6 wheel channel for Maxwell/Pascal/Volta architectures, while an explicit `-TorchIndexUrl` still overrides automatic selection. `torch` and `torchaudio` are upgraded together.
+- Windows diarization preflight now executes and synchronizes a real one-element CUDA tensor operation rather than relying only on `torch.cuda.is_available()`, catching architecture-incompatible CUDA wheels before service installation.
+- Explicit Windows `cuda` configuration does not permit silent CPU fallback. CTranslate2 must see a native CUDA device and the selected compute type, and PyTorch must execute a CUDA kernel for enabled CUDA diarization.
 - Windows `.env` parsing accepts a UTF-8 BOM written by Windows PowerShell 5.1, so preserved configuration remains usable across reinstall and service startup.
 - `make install` now creates and installs into `.venv` instead of attempting to modify the system/Homebrew Python environment.
 - `make install-system` and `make uninstall` dispatch to systemd tooling on Linux and launchd tooling on macOS; Windows uses the dedicated elevated PowerShell service installer scripts.
@@ -62,6 +67,7 @@ All notable changes to toolsApi-worker are documented here.
 - `toolsapi-worker run` executes the live serial polling lifecycle.
 - URL-source execution remains disabled by default (`TOOLS_WORKER_ACCEPTS_URL_SOURCES=false`). Initial live execution is restricted to lease-bound Tools-hosted media.
 - Runtime concurrency is deliberately limited to `1` until parallel ownership/lifecycle handling has dedicated coverage.
+- Development version advanced from `0.1.0.dev0` to `0.1.1.dev0` for the compatible Windows GPU installer/runtime fix.
 
 ### Security
 
