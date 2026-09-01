@@ -19,6 +19,7 @@ class PyannoteDiarizer:
         self.config = config
         self.pipeline_factory = pipeline_factory
         self.torch_module = torch_module
+        self._cuda_probe_result: bool | None = None
 
     @property
     def supported(self) -> bool:
@@ -180,8 +181,7 @@ class PyannoteDiarizer:
             return configured
 
         torch = self._torch()
-        cuda = getattr(torch, "cuda", None)
-        if cuda is not None and bool(getattr(cuda, "is_available", lambda: False)()):
+        if self._cuda_device_available(torch):
             return "cuda"
 
         backends = getattr(torch, "backends", None)
@@ -197,8 +197,8 @@ class PyannoteDiarizer:
             return pipeline
 
         torch = self._torch()
-        if device == "cuda" and not bool(getattr(getattr(torch, "cuda", None), "is_available", lambda: False)()):
-            raise RuntimeError("CUDA diarization was requested but CUDA is unavailable on this worker.")
+        if device == "cuda" and not self._cuda_device_available(torch):
+            raise RuntimeError("CUDA diarization was requested but CUDA kernel execution is unavailable on this worker.")
         if device in {"mps", "metal"}:
             backends = getattr(torch, "backends", None)
             mps = getattr(backends, "mps", None) if backends is not None else None
@@ -234,12 +234,42 @@ class PyannoteDiarizer:
         if device == "auto":
             return True
         if device == "cuda":
-            return bool(getattr(getattr(torch, "cuda", None), "is_available", lambda: False)())
+            return self._cuda_device_available(torch)
         if device in {"mps", "metal"}:
             backends = getattr(torch, "backends", None)
             mps = getattr(backends, "mps", None) if backends is not None else None
             return mps is not None and bool(getattr(mps, "is_available", lambda: False)())
         return False
+
+    def _cuda_device_available(self, torch: Any) -> bool:
+        if self._cuda_probe_result is not None:
+            return self._cuda_probe_result
+
+        cuda = getattr(torch, "cuda", None)
+        if cuda is None or not bool(getattr(cuda, "is_available", lambda: False)()):
+            self._cuda_probe_result = False
+            return False
+
+        try:
+            ones = getattr(torch, "ones", None)
+            if not callable(ones):
+                self._cuda_probe_result = False
+                return False
+            probe = ones(1, device="cuda")
+            result = (probe + 1).cpu()
+            item = getattr(result, "item", None)
+            if callable(item) and float(item()) != 2.0:
+                self._cuda_probe_result = False
+                return False
+            synchronize = getattr(cuda, "synchronize", None)
+            if callable(synchronize):
+                synchronize()
+        except Exception:  # noqa: BLE001
+            self._cuda_probe_result = False
+            return False
+
+        self._cuda_probe_result = True
+        return True
 
     def _support_failure(self) -> tuple[str, str]:
         if not self.config.diarization_enabled:
