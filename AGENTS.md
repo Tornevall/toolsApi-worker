@@ -43,6 +43,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 - Python 3.10 or newer is the worker runtime on every supported platform.
 - Windows workers are native Windows services. Do not introduce WSL as a runtime dependency and do not use Task Scheduler as the worker execution model. PowerShell is for installation/service administration only; the worker process is the continuous Python poll loop.
 - Native Windows CUDA must be validated before a worker configured for `cuda` starts. An explicit CUDA configuration must fail closed when CTranslate2/faster-whisper or PyTorch/pyannote cannot see the NVIDIA GPU; never silently fall back to CPU.
+- Explicit accelerated runtime configuration must be revalidated at every worker process start before the first claim. Installer-time validation alone is insufficient because `.env`, drivers, CUDA libraries and PyTorch builds can change between starts.
 - A fresh Windows installation may select CUDA automatically when a native NVIDIA driver is detected, but existing `.env` values remain authoritative and must be preserved.
 - macOS launchd workers must receive a runtime `PATH` that can resolve the ffmpeg executable validated by the installer. Do not assume launchd inherits Homebrew paths from an interactive shell.
 - CPU, CUDA and Apple Silicon Metal/MLX are configuration choices; do not hardcode one device into the cross-platform contract.
@@ -80,6 +81,7 @@ Tests should cover at minimum when relevant:
 - a successful diarization maps speaker labels onto segments and submits safe structured metadata
 - a diarization failure preserves the transcript and never exposes the Hugging Face token value
 - explicit CUDA configuration does not silently fall back to CPU
+- explicit accelerated devices are validated before capability advertisement and before the first live claim after every process start
 - pyannote `auto` device preference selects CUDA before Apple MPS before CPU
 - older ToolsAPI claim policies are rejected before live work is consumed
 - temporary media is cleaned after acknowledged terminal state or lease loss
