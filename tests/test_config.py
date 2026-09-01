@@ -21,6 +21,11 @@ class WorkerConfigTest(unittest.TestCase):
             "TOOLS_WORKER_WHISPER_DEVICE": "cpu",
             "TOOLS_WORKER_WHISPER_COMPUTE_TYPE": "int8",
             "TOOLS_WORKER_ACCEPTS_URL_SOURCES": "false",
+            "TOOLS_WORKER_DIARIZATION_ENABLED": "true",
+            "TOOLS_WORKER_DIARIZATION_HF_TOKEN": "hf_test_only",
+            "TOOLS_WORKER_DIARIZATION_MIN_SPEAKERS": "2",
+            "TOOLS_WORKER_DIARIZATION_MAX_SPEAKERS": "4",
+            "TOOLS_WORKER_DIARIZATION_DEVICE": "cpu",
             "TOOLS_WORKER_TEMP_ROOT": "/tmp/toolsapi-worker-test",
         }
         with patch.dict(os.environ, env, clear=True):
@@ -38,9 +43,15 @@ class WorkerConfigTest(unittest.TestCase):
         self.assertEqual("cpu", config.whisper_device)
         self.assertEqual("int8", config.whisper_compute_type)
         self.assertFalse(config.accepts_url_sources)
+        self.assertTrue(config.diarization_enabled)
+        self.assertEqual("pyannote", config.diarization_provider)
+        self.assertEqual("hf_test_only", config.diarization_hf_token)
+        self.assertEqual(2, config.diarization_min_speakers)
+        self.assertEqual(4, config.diarization_max_speakers)
+        self.assertEqual("cpu", config.diarization_device)
         self.assertEqual("/tmp/toolsapi-worker-test", config.temp_root)
 
-    def test_default_idle_poll_is_sixty_seconds(self):
+    def test_default_idle_poll_and_diarization_are_enabled(self):
         env = {
             "TOOLS_API_BASE_URL": "https://tools.example.test",
             "TOOLS_WORKER_TOKEN": "worker-secret",
@@ -51,6 +62,10 @@ class WorkerConfigTest(unittest.TestCase):
 
         self.assertEqual(60.0, config.poll_seconds)
         self.assertEqual(30.0, config.heartbeat_seconds)
+        self.assertTrue(config.diarization_enabled)
+        self.assertEqual("pyannote/speaker-diarization-community-1", config.diarization_model)
+        self.assertEqual("auto", config.diarization_device)
+        self.assertTrue(config.temp_root.endswith("toolsapi-worker"))
 
     def test_env_file_is_parsed_without_shell_evaluation(self):
         with tempfile.TemporaryDirectory() as root:
@@ -71,6 +86,7 @@ class WorkerConfigTest(unittest.TestCase):
         self.assertEqual("mac worker", config.worker_id)
         self.assertEqual("metal", config.whisper_device)
         self.assertEqual(("large-v3", "turbo"), config.whisper_models)
+        self.assertTrue(config.diarization_enabled)
 
     def test_process_environment_overrides_env_file(self):
         with tempfile.TemporaryDirectory() as root:
@@ -106,6 +122,20 @@ class WorkerConfigTest(unittest.TestCase):
             "TOOLS_WORKER_TOKEN": "worker-secret",
             "TOOLS_WORKER_ID": "worker-01",
             "TOOLS_WORKER_CONCURRENCY": "2",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = WorkerConfig.from_environment()
+
+        with self.assertRaises(ValueError):
+            config.validate_protocol_configuration()
+
+    def test_invalid_speaker_bounds_are_rejected(self):
+        env = {
+            "TOOLS_API_BASE_URL": "https://tools.example.test",
+            "TOOLS_WORKER_TOKEN": "worker-secret",
+            "TOOLS_WORKER_ID": "worker-01",
+            "TOOLS_WORKER_DIARIZATION_MIN_SPEAKERS": "5",
+            "TOOLS_WORKER_DIARIZATION_MAX_SPEAKERS": "2",
         }
         with patch.dict(os.environ, env, clear=True):
             config = WorkerConfig.from_environment()
