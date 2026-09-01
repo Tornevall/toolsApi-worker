@@ -180,6 +180,7 @@ if ($LASTEXITCODE -ne 0) {
 $ParametersKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName\Parameters"
 New-Item -Path $ParametersKey -Force | Out-Null
 New-ItemProperty -Path $ParametersKey -Name "EnvFile" -PropertyType String -Value $EnvFile -Force | Out-Null
+New-ItemProperty -Path $ParametersKey -Name "PythonExe" -PropertyType String -Value $VenvPython -Force | Out-Null
 
 $Token = Get-EnvValue -Name "TOOLS_WORKER_TOKEN"
 $BaseUrl = Get-EnvValue -Name "TOOLS_API_BASE_URL"
