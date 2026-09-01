@@ -10,9 +10,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="toolsapi-worker")
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("run", help="Start the worker polling loop")
-    sub.add_parser("status", help="Print local worker status")
+
+    run_parser = sub.add_parser("run", help="Start the worker polling loop")
+    run_parser.add_argument("--env-file", help="Load worker configuration from an env file without shell evaluation")
+
+    status_parser = sub.add_parser("status", help="Print local worker status")
+    status_parser.add_argument("--env-file", help="Load worker configuration from an env file without shell evaluation")
     return parser
+
+
+def load_config(env_file: str | None) -> WorkerConfig:
+    if env_file:
+        return WorkerConfig.from_env_file(env_file)
+    return WorkerConfig.from_environment()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -20,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "status":
-        config = WorkerConfig.from_environment()
+        config = load_config(args.env_file)
         configured = bool(config.api_base_url and config.worker_token and config.worker_id)
         state = "configured" if configured else "installed, credentials pending"
         print(
@@ -32,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         try:
-            config = WorkerConfig.from_environment()
+            config = load_config(args.env_file)
             config.validate_protocol_configuration()
             WorkerRuntime(config).run_forever()
         except KeyboardInterrupt:
