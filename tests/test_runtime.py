@@ -5,7 +5,13 @@ from pathlib import Path
 
 from toolsapi_worker.api import WhisperClaim, WorkerApiError
 from toolsapi_worker.config import WorkerConfig
-from toolsapi_worker.runtime import LeaseHeartbeat, WhisperResult, WorkerRuntime
+from toolsapi_worker.runtime import (
+    LeaseHeartbeat,
+    MlxWhisperHandler,
+    WhisperResult,
+    WorkerRuntime,
+    build_whisper_handler,
+)
 
 
 class FakeClient:
@@ -56,7 +62,7 @@ class SlowHandler:
 
 
 class WorkerRuntimeTest(unittest.TestCase):
-    def config(self, temp_root, heartbeat_seconds=0.05):
+    def config(self, temp_root, heartbeat_seconds=0.05, device="cpu", compute_type="int8", models=("small",)):
         return WorkerConfig(
             api_base_url="https://tools.example.test",
             worker_token="worker-secret",
@@ -65,14 +71,14 @@ class WorkerRuntimeTest(unittest.TestCase):
             poll_seconds=0.01,
             heartbeat_seconds=heartbeat_seconds,
             enabled_handlers=("whisper.transcribe",),
-            whisper_models=("small",),
-            whisper_device="cpu",
-            whisper_compute_type="int8",
+            whisper_models=models,
+            whisper_device=device,
+            whisper_compute_type=compute_type,
             accepts_url_sources=False,
             temp_root=str(temp_root),
         )
 
-    def claim(self):
+    def claim(self, model="small"):
         return WhisperClaim(
             job_id=123,
             lease_id="lease-abc",
@@ -80,7 +86,7 @@ class WorkerRuntimeTest(unittest.TestCase):
             contract="whisper.transcribe",
             contract_version=1,
             lease_expires_at="2026-08-23T14:30:00+00:00",
-            model="small",
+            model=model,
             language="sv",
             diarization_requested=True,
             input={"type": "tools_media", "download_url": "https://tools.example.test/api/whisper/worker/jobs/123/media"},
@@ -163,6 +169,44 @@ class WorkerRuntimeTest(unittest.TestCase):
 
             self.assertEqual(1, len(client.fail_calls))
             self.assertIn("URL-source execution is disabled", client.fail_calls[0][2])
+
+    def test_metal_device_selects_mlx_handler(self):
+        with tempfile.TemporaryDirectory() as root:
+            handler = build_whisper_handler(self.config(root, device="metal", compute_type="float16"))
+        self.assertIsInstance(handler, MlxWhisperHandler)
+
+    def test_mlx_handler_normalizes_transcript_and_segments(self):
+        calls = []
+
+        def fake_transcribe(path, **kwargs):
+            calls.append((path, kwargs))
+            return {
+                "text": " Hej världen ",
+                "segments": [
+                    {"start": 0.0, "end": 1.25, "text": " Hej "},
+                    {"start": 1.25, "end": 2.5, "text": " världen "},
+                ],
+                "language": "sv",
+            }
+
+        with tempfile.TemporaryDirectory() as root:
+            config = self.config(root, device="metal", compute_type="float16", models=("large-v3",))
+            handler = MlxWhisperHandler(config, transcribe_func=fake_transcribe)
+            heartbeat = LeaseHeartbeat(FakeClient(), self.claim(model="large-v3"), 1)
+            input_path = Path(root) / "audio.m4a"
+            input_path.write_bytes(b"fake")
+
+            result = handler.transcribe(self.claim(model="large-v3"), input_path, heartbeat)
+
+        self.assertEqual("Hej världen", result.transcript_text)
+        self.assertEqual(2, len(result.segments))
+        self.assertEqual("mlx-whisper", result.runtime["engine"])
+        self.assertEqual("metal", result.runtime["device"])
+        self.assertEqual("mlx-community/whisper-large-v3-mlx", result.runtime["model_repository"])
+        self.assertEqual(str(input_path), calls[0][0])
+        self.assertEqual("mlx-community/whisper-large-v3-mlx", calls[0][1]["path_or_hf_repo"])
+        self.assertEqual("sv", calls[0][1]["language"])
+        self.assertFalse(calls[0][1]["verbose"])
 
 
 if __name__ == "__main__":
