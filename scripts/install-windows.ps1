@@ -1,7 +1,6 @@
 param(
-    [string]$Prefix = "$env:LOCALAPPDATA\toolsapi-worker",
-    [string]$Python = "",
-    [switch]$NoScheduledTask
+    [string]$Prefix = "$env:ProgramData\Tornevall\toolsapi-worker",
+    [string]$Python = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,8 +8,12 @@ $SourceDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path
 $EnvFile = Join-Path $Prefix ".env"
 $VenvDir = Join-Path $Prefix ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
-$RunnerScript = Join-Path $Prefix "run-worker.ps1"
-$TaskName = "ToolsAPI Worker"
+$ServiceName = "ToolsAPIWorker"
+
+$Principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw "install-windows.ps1 must be run from an elevated PowerShell session."
+}
 
 function Resolve-PythonCommand {
     param([string]$Requested)
@@ -68,36 +71,49 @@ if ($LASTEXITCODE -ne 0) {
     throw "Could not update the worker virtual environment."
 }
 
-$InstallTarget = "$SourceDir[whisper]"
+$InstallTarget = "$SourceDir[whisper,windows]"
 & $VenvPython -m pip install $InstallTarget
 if ($LASTEXITCODE -ne 0) {
-    throw "Could not install toolsapi-worker Whisper and diarization dependencies."
+    throw "Could not install toolsapi-worker Whisper, diarization and Windows service dependencies."
 }
 
 if (-not (Test-Path $EnvFile)) {
     Copy-Item (Join-Path $SourceDir ".env.example") $EnvFile
 }
 
-$RunnerContent = @"
-`$ErrorActionPreference = "Continue"
-`$python = "$VenvPython"
-`$envFile = "$EnvFile"
-`$logFile = "$Prefix\worker.log"
-& `$python -m toolsapi_worker.cli run --env-file `$envFile *>> `$logFile
-"@
-Set-Content -Path $RunnerScript -Value $RunnerContent -Encoding UTF8
-
-if (-not $NoScheduledTask) {
-    $PowerShellExe = (Get-Command powershell.exe -ErrorAction Stop).Source
-    $Action = New-ScheduledTaskAction -Execute $PowerShellExe -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$RunnerScript`""
-    $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-    $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description "Tornevall ToolsAPI background worker" -Force | Out-Null
+$ExistingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+if ($ExistingService) {
+    if ($ExistingService.Status -ne "Stopped") {
+        Stop-Service -Name $ServiceName -Force
+        $ExistingService.WaitForStatus("Stopped", (New-TimeSpan -Seconds 30))
+    }
+    & $VenvPython -m toolsapi_worker.windows_service update --startup auto
+} else {
+    & $VenvPython -m toolsapi_worker.windows_service install --startup auto
+}
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not install or update the ToolsAPI Worker Windows service."
 }
 
-Write-Host "Installed toolsapi-worker in $Prefix"
+$ParametersKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName\Parameters"
+New-Item -Path $ParametersKey -Force | Out-Null
+New-ItemProperty -Path $ParametersKey -Name "EnvFile" -PropertyType String -Value $EnvFile -Force | Out-Null
+
+$Token = ""
+$BaseUrl = ""
+foreach ($Line in Get-Content $EnvFile) {
+    if ($Line -match '^TOOLS_WORKER_TOKEN=(.*)$') { $Token = $Matches[1].Trim() }
+    if ($Line -match '^TOOLS_API_BASE_URL=(.*)$') { $BaseUrl = $Matches[1].Trim() }
+}
+
+if ($Token -and $BaseUrl -and $BaseUrl -ne "https://tools.example.test") {
+    Start-Service -Name $ServiceName
+    Write-Host "Installed and started $ServiceName as a continuous polling service."
+} else {
+    Write-Host "Installed $ServiceName as a continuous polling service, but it was not started because ToolsAPI credentials are not configured."
+    Write-Host "Configure $EnvFile and then run: Start-Service $ServiceName"
+}
+
 Write-Host "Configuration: $EnvFile"
-Write-Host "Diarization is enabled by default. Set TOOLS_WORKER_DIARIZATION_HF_TOKEN in .env when Community-1 is not already available locally."
-if (-not $NoScheduledTask) {
-    Write-Host "Scheduled task '$TaskName' was registered for the current user."
-}
+Write-Host "Diarization is enabled by default and can be disabled with TOOLS_WORKER_DIARIZATION_ENABLED=false."
+Write-Host "Set TOOLS_WORKER_DIARIZATION_HF_TOKEN in .env when Community-1 is not already available locally."
