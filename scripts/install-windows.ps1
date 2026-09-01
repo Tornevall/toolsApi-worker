@@ -50,10 +50,19 @@ function Invoke-ResolvedPython {
     }
 }
 
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+    throw "ffmpeg is required for Whisper/pyannote audio processing. Install ffmpeg and ensure it is available in PATH."
+}
+
 $PythonCommand = Resolve-PythonCommand -Requested $Python
 New-Item -ItemType Directory -Path $Prefix -Force | Out-Null
 
 Invoke-ResolvedPython -Command $PythonCommand -Arguments @("-m", "venv", $VenvDir)
+& $VenvPython -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 2)"
+if ($LASTEXITCODE -ne 0) {
+    throw "Python 3.10 or newer is required."
+}
+
 & $VenvPython -m pip install --upgrade pip setuptools wheel
 if ($LASTEXITCODE -ne 0) {
     throw "Could not update the worker virtual environment."
