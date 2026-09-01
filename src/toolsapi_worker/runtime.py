@@ -16,6 +16,7 @@ from .api import (
     WorkerLeaseLostError,
 )
 from .config import WorkerConfig
+from .diarization import PyannoteDiarizer
 
 
 @dataclass
@@ -138,10 +139,10 @@ class FasterWhisperHandler:
 
             if duration > 0:
                 ratio = min(1.0, max(0.0, end / duration))
-                progress = 20 + int(ratio * 74)
+                progress = 20 + int(ratio * 73)
                 detail = f"{end:.1f} / {duration:.1f} seconds"
             else:
-                progress = min(94, 20 + len(segments))
+                progress = min(93, 20 + len(segments))
                 detail = f"{len(segments)} segments produced"
             heartbeat.update(progress, "Transcribing", detail)
 
@@ -151,7 +152,7 @@ class FasterWhisperHandler:
             raise RuntimeError("Whisper returned an empty transcript")
 
         processing_seconds = round(time.monotonic() - started, 3)
-        heartbeat.update(97, "Finalizing", "Submitting remote Whisper transcript to ToolsAPI.")
+        heartbeat.update(94, "Transcription complete", "Transcript ready; preparing requested post-processing.")
 
         return WhisperResult(
             transcript_text=transcript_text,
@@ -248,7 +249,7 @@ class MlxWhisperHandler:
 
         duration = max((float(segment["end"]) for segment in segments), default=0.0)
         processing_seconds = round(time.monotonic() - started, 3)
-        heartbeat.update(97, "Finalizing", "Submitting MLX Whisper transcript to ToolsAPI.")
+        heartbeat.update(94, "Transcription complete", "MLX transcript ready; preparing requested post-processing.")
 
         return WhisperResult(
             transcript_text=transcript_text,
@@ -285,6 +286,7 @@ class WorkerRuntime:
         config: WorkerConfig,
         client: ToolsApiClient | None = None,
         handler: Any | None = None,
+        diarizer: Any | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.config = config
@@ -294,6 +296,7 @@ class WorkerRuntime:
             config.worker_id,
         )
         self.handler = handler or build_whisper_handler(config)
+        self.diarizer = diarizer or PyannoteDiarizer(config)
         self.sleep = sleep
 
     def run_forever(self) -> None:
@@ -305,6 +308,7 @@ class WorkerRuntime:
                     device=self.config.whisper_device,
                     compute_type=self.config.whisper_compute_type,
                     accepts_url_sources=self.config.accepts_url_sources,
+                    supports_diarization=bool(getattr(self.diarizer, "supported", False)),
                 )
             except WorkerAuthenticationError:
                 raise
@@ -335,13 +339,27 @@ class WorkerRuntime:
 
             result = self.handler.transcribe(claim, input_path, heartbeat)
             heartbeat.assert_owned()
+
+            segments = result.segments
+            diarization: dict[str, Any] = {
+                "requested": False,
+                "status": "skipped",
+                "provider": self.config.diarization_provider,
+                "reason": "not_requested",
+            }
+            if claim.diarization_requested:
+                segments, diarization = self.diarizer.diarize(claim, input_path, segments, heartbeat)
+                heartbeat.assert_owned()
+
+            heartbeat.update(99, "Finalizing", "Submitting remote Whisper transcript and diarization result to ToolsAPI.")
             heartbeat.stop()
             self._retry_terminal(
                 lambda: self.client.complete_whisper(
                     claim,
                     result.transcript_text,
-                    result.segments,
+                    segments,
                     result.runtime,
+                    diarization,
                 )
             )
         except WorkerLeaseLostError:
