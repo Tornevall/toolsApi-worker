@@ -51,12 +51,40 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - name: Validate launchd template
-        run: plutil -lint packaging/launchd/net.tornevall.toolsapi-worker.plist
+      - name: Validate Apple Silicon runner and launchd template
+        run: |
+          test "$(uname -m)" = arm64
+          plutil -lint packaging/launchd/net.tornevall.toolsapi-worker.plist
       - name: Verify PEP 668-safe local install
         run: make install
       - name: Verify locally installed CLI
         run: .venv/bin/toolsapi-worker status
+      - name: Exercise launchd installer, reinstall and uninstall
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake-bin" "$RUNNER_TEMP/LaunchAgents"
+          printf '#!/bin/sh\nexit 0\n' > "$RUNNER_TEMP/fake-bin/ffmpeg"
+          chmod +x "$RUNNER_TEMP/fake-bin/ffmpeg"
+          export PATH="$RUNNER_TEMP/fake-bin:$PATH"
+          export PREFIX="$RUNNER_TEMP/toolsapi-worker"
+          export ENV_FILE="$PREFIX/.env"
+          export PLIST_DIR="$RUNNER_TEMP/LaunchAgents"
+
+          bash ./scripts/install-macos.sh
+          test -f "$ENV_FILE"
+          grep -q '^TOOLS_WORKER_WHISPER_DEVICE=metal$' "$ENV_FILE"
+          "$PREFIX/.venv/bin/toolsapi-worker" status --env-file "$ENV_FILE" | grep -q 'device=metal'
+          plutil -lint "$PLIST_DIR/net.tornevall.toolsapi-worker.plist"
+          grep -q -- '--env-file' "$PLIST_DIR/net.tornevall.toolsapi-worker.plist"
+
+          printf '\nTOOLS_INSTALL_TEST_SENTINEL=preserve-me\n' >> "$ENV_FILE"
+          bash ./scripts/install-macos.sh
+          grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' "$ENV_FILE"
+
+          bash ./scripts/uninstall-macos.sh
+          test -f "$ENV_FILE"
+          grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' "$ENV_FILE"
+          test ! -e "$PREFIX/.venv"
+          test ! -e "$PLIST_DIR/net.tornevall.toolsapi-worker.plist"
 
   system-install:
     strategy:
