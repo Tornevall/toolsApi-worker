@@ -71,14 +71,18 @@ jobs:
 
           bash ./scripts/install-macos.sh
           test -f "$ENV_FILE"
+          grep -q '^TOOLS_WORKER_POLL_SECONDS=60$' "$ENV_FILE"
           grep -q '^TOOLS_WORKER_WHISPER_DEVICE=metal$' "$ENV_FILE"
           "$PREFIX/.venv/bin/toolsapi-worker" status --env-file "$ENV_FILE" | grep -q 'device=metal'
           plutil -lint "$PLIST_DIR/net.tornevall.toolsapi-worker.plist"
           grep -q -- '--env-file' "$PLIST_DIR/net.tornevall.toolsapi-worker.plist"
+          grep -q "$RUNNER_TEMP/fake-bin" "$PLIST_DIR/net.tornevall.toolsapi-worker.plist"
+          /usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PATH' "$PLIST_DIR/net.tornevall.toolsapi-worker.plist" | grep -q "$RUNNER_TEMP/fake-bin"
 
           printf '\nTOOLS_INSTALL_TEST_SENTINEL=preserve-me\n' >> "$ENV_FILE"
           bash ./scripts/install-macos.sh
           grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' "$ENV_FILE"
+          /usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PATH' "$PLIST_DIR/net.tornevall.toolsapi-worker.plist" | grep -q "$RUNNER_TEMP/fake-bin"
 
           bash ./scripts/uninstall-macos.sh
           test -f "$ENV_FILE"

@@ -63,7 +63,7 @@ class WorkerConfig:
             return str(environment.get(name, default))
 
         concurrency = max(1, int(env("TOOLS_WORKER_CONCURRENCY", "1")))
-        poll_seconds = max(1.0, float(env("TOOLS_WORKER_POLL_SECONDS", "5")))
+        poll_seconds = max(1.0, float(env("TOOLS_WORKER_POLL_SECONDS", "60")))
         heartbeat_seconds = max(5.0, float(env("TOOLS_WORKER_HEARTBEAT_SECONDS", "30")))
         handlers = tuple(
             handler.strip()

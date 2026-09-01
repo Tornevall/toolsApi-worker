@@ -13,6 +13,11 @@
     </array>
     <key>WorkingDirectory</key>
     <string>@PREFIX@</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>@RUNTIME_PATH@</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

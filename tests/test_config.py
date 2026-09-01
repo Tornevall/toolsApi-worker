@@ -40,6 +40,18 @@ class WorkerConfigTest(unittest.TestCase):
         self.assertFalse(config.accepts_url_sources)
         self.assertEqual("/tmp/toolsapi-worker-test", config.temp_root)
 
+    def test_default_idle_poll_is_sixty_seconds(self):
+        env = {
+            "TOOLS_API_BASE_URL": "https://tools.example.test",
+            "TOOLS_WORKER_TOKEN": "worker-secret",
+            "TOOLS_WORKER_ID": "worker-01",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = WorkerConfig.from_environment()
+
+        self.assertEqual(60.0, config.poll_seconds)
+        self.assertEqual(30.0, config.heartbeat_seconds)
+
     def test_env_file_is_parsed_without_shell_evaluation(self):
         with tempfile.TemporaryDirectory() as root:
             env_file = Path(root) / ".env"

@@ -29,6 +29,10 @@ command -v ffmpeg >/dev/null 2>&1 || {
   exit 1
 }
 
+FFMPEG_BIN="$(command -v ffmpeg)"
+FFMPEG_DIR="$(dirname "${FFMPEG_BIN}")"
+RUNTIME_PATH="${FFMPEG_DIR}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
 mkdir -p "${PREFIX}" "${PLIST_DIR}" "${HOME}/Library/Logs"
 "${PYTHON}" -m venv "${PREFIX}/.venv"
 "${PREFIX}/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
@@ -45,17 +49,18 @@ if [[ ! -f "${ENV_FILE}" ]]; then
 fi
 chmod 0600 "${ENV_FILE}"
 
-"${PYTHON}" - "${SOURCE_DIR}/packaging/launchd/net.tornevall.toolsapi-worker.plist" "${PLIST_FILE}" "${PREFIX}" "${HOME}" "${ENV_FILE}" <<'PY'
+"${PYTHON}" - "${SOURCE_DIR}/packaging/launchd/net.tornevall.toolsapi-worker.plist" "${PLIST_FILE}" "${PREFIX}" "${HOME}" "${ENV_FILE}" "${RUNTIME_PATH}" <<'PY'
 import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-template_path, output_path, prefix, home, env_file = sys.argv[1:]
+template_path, output_path, prefix, home, env_file, runtime_path = sys.argv[1:]
 content = Path(template_path).read_text(encoding="utf-8")
 content = (
     content.replace("@PREFIX@", escape(prefix))
     .replace("@HOME@", escape(home))
     .replace("@ENV_FILE@", escape(env_file))
+    .replace("@RUNTIME_PATH@", escape(runtime_path))
 )
 Path(output_path).write_text(content, encoding="utf-8")
 PY

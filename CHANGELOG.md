@@ -38,6 +38,8 @@ All notable changes to toolsApi-worker are documented here.
 - Corrected `.env.example` so it no longer describes `/etc/toolsapi-worker/.env` as the canonical runtime configuration path.
 - Production Linux system installation installs the `whisper` runtime extra with `faster-whisper>=1.2.1,<2`.
 - Production Apple Silicon macOS installation installs the `whisper-mlx` runtime extra with `mlx-whisper` and defaults to `device=metal`, `compute_type=float16`, and `large-v3,turbo`.
+- The macOS launchd installer now records an explicit runtime `PATH` containing the resolved ffmpeg directory plus standard Apple Silicon/Homebrew locations, so MLX Whisper can invoke the ffmpeg CLI when launched outside an interactive shell.
+- The default idle claim interval is now 60 seconds instead of 5 seconds; active-job heartbeat remains independently configured at 30 seconds by default.
 - `toolsapi-worker run` now executes the live serial polling lifecycle instead of returning the bootstrap placeholder error.
 - Live polling requires ToolsAPI `claim_policy_version >= 1`; older server deployments are rejected before any job is consumed.
 - URL-source execution remains disabled by default (`TOOLS_WORKER_ACCEPTS_URL_SOURCES=false`). Initial live execution is restricted to lease-bound Tools-hosted media.
