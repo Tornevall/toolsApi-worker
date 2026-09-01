@@ -43,7 +43,7 @@ install:
 
 install-system:
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		./scripts/install-macos.sh; \
+		bash ./scripts/install-macos.sh; \
 	else \
 		sudo ./scripts/install.sh; \
 	fi
@@ -72,7 +72,7 @@ smoke-install:
 
 uninstall:
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		./scripts/uninstall-macos.sh; \
+		bash ./scripts/uninstall-macos.sh; \
 	else \
 		sudo ./scripts/uninstall.sh; \
 	fi
