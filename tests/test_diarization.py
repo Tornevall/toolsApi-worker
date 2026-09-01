@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from toolsapi_worker.api import WhisperClaim
 from toolsapi_worker.config import WorkerConfig
@@ -117,6 +118,12 @@ class WorkerDiarizationTest(unittest.TestCase):
         self.assertEqual("SPEAKER_01", mapped[1]["speaker_label"])
         self.assertTrue(any(label == "Speaker diarization" for _, label, _ in heartbeat.updates))
 
+    def test_capability_is_not_advertised_when_runtime_dependencies_are_missing(self):
+        diarizer = PyannoteDiarizer(self.config())
+
+        with patch("toolsapi_worker.diarization.importlib.util.find_spec", return_value=None):
+            self.assertFalse(diarizer.supported)
+
     def test_auto_device_prefers_cuda(self):
         pipeline = _Pipeline()
         diarizer = PyannoteDiarizer(
@@ -174,6 +181,28 @@ class WorkerDiarizationTest(unittest.TestCase):
         self.assertEqual("model_access_denied", result["error_code"])
         self.assertTrue(result["hf_token_present"])
         self.assertNotIn("hf_secret_never_return", str(result))
+
+    def test_unclassified_error_never_exposes_configured_hf_token(self):
+        secret = "hf_secret_never_return"
+
+        def broken_pipeline(_source, token=None):
+            raise RuntimeError(f"unexpected provider failure containing {secret}")
+
+        diarizer = PyannoteDiarizer(self.config(), pipeline_factory=broken_pipeline)
+        heartbeat = _Heartbeat()
+        segments = [{"start": 0.0, "end": 1.0, "text": "Bevaras"}]
+
+        with tempfile.TemporaryDirectory() as root:
+            media = Path(root) / "audio.wav"
+            media.write_bytes(b"fake")
+            mapped, result = diarizer.diarize(self.claim(), media, segments, heartbeat)
+
+        self.assertEqual(segments, mapped)
+        self.assertEqual("failed", result["status"])
+        self.assertEqual("process_failed", result["error_code"])
+        self.assertEqual("Speaker diarization failed on this worker.", result["error_message"])
+        self.assertNotIn(secret, str(result))
+        self.assertNotIn(secret, str(heartbeat.updates))
 
     def test_not_requested_is_skipped_without_loading_pipeline(self):
         called = False
