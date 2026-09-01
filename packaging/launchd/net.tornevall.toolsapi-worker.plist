@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>net.tornevall.toolsapi-worker</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>@PREFIX@/run-worker.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>@PREFIX@</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>StandardOutPath</key>
+    <string>@HOME@/Library/Logs/toolsapi-worker.log</string>
+    <key>StandardErrorPath</key>
+    <string>@HOME@/Library/Logs/toolsapi-worker.error.log</string>
+</dict>
+</plist>
