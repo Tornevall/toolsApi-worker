@@ -45,35 +45,40 @@ if [[ ! -f "${ENV_FILE}" ]]; then
 fi
 chmod 0600 "${ENV_FILE}"
 
-cat > "${PREFIX}/run-worker.sh" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-set -a
-source "${ENV_FILE}"
-set +a
-exec "${PREFIX}/.venv/bin/toolsapi-worker" run
-EOF
-chmod 0755 "${PREFIX}/run-worker.sh"
-
-python3 - "${SOURCE_DIR}/packaging/launchd/net.tornevall.toolsapi-worker.plist" "${PLIST_FILE}" "${PREFIX}" "${HOME}" <<'PY'
+"${PYTHON}" - "${SOURCE_DIR}/packaging/launchd/net.tornevall.toolsapi-worker.plist" "${PLIST_FILE}" "${PREFIX}" "${HOME}" "${ENV_FILE}" <<'PY'
 import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-template_path, output_path, prefix, home = sys.argv[1:]
+template_path, output_path, prefix, home, env_file = sys.argv[1:]
 content = Path(template_path).read_text(encoding="utf-8")
-content = content.replace("@PREFIX@", escape(prefix)).replace("@HOME@", escape(home))
+content = (
+    content.replace("@PREFIX@", escape(prefix))
+    .replace("@HOME@", escape(home))
+    .replace("@ENV_FILE@", escape(env_file))
+)
 Path(output_path).write_text(content, encoding="utf-8")
 PY
 
+chmod 0600 "${PLIST_FILE}"
 plutil -lint "${PLIST_FILE}" >/dev/null
-
-TOKEN="$(grep -E '^TOOLS_WORKER_TOKEN=' "${ENV_FILE}" | cut -d= -f2- || true)"
-BASE_URL="$(grep -E '^TOOLS_API_BASE_URL=' "${ENV_FILE}" | cut -d= -f2- || true)"
 DOMAIN="gui/$(id -u)"
 
 launchctl bootout "${DOMAIN}" "${PLIST_FILE}" >/dev/null 2>&1 || true
-if [[ -n "${TOKEN}" && -n "${BASE_URL}" && "${BASE_URL}" != "https://tools.example.test" ]]; then
+if "${PREFIX}/.venv/bin/python" - "${ENV_FILE}" <<'PY'
+import sys
+from toolsapi_worker.config import WorkerConfig
+
+config = WorkerConfig.from_env_file(sys.argv[1])
+configured = bool(
+    config.api_base_url
+    and config.api_base_url != "https://tools.example.test"
+    and config.worker_token
+    and config.worker_id
+)
+raise SystemExit(0 if configured else 1)
+PY
+then
   launchctl bootstrap "${DOMAIN}" "${PLIST_FILE}"
   launchctl enable "${DOMAIN}/${PLIST_LABEL}" >/dev/null 2>&1 || true
   launchctl kickstart -k "${DOMAIN}/${PLIST_LABEL}"
