@@ -111,6 +111,7 @@ $NativeNvidia = $null -ne (Get-Command nvidia-smi.exe -ErrorAction SilentlyConti
 $GpuComputeCapability = if ($NativeNvidia) { Get-NvidiaComputeCapability } else { "" }
 $EffectiveTorchIndexUrl = Resolve-PyTorchIndexUrl -RequestedIndexUrl $TorchIndexUrl -ComputeCapability $GpuComputeCapability
 $FreshConfig = -not (Test-Path $EnvFile)
+$ExistingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 
 New-Item -ItemType Directory -Path $Prefix -Force | Out-Null
 
@@ -151,6 +152,15 @@ $WhisperDevice = (Get-EnvValue -Name "TOOLS_WORKER_WHISPER_DEVICE").ToLowerInvar
 $WhisperComputeType = (Get-EnvValue -Name "TOOLS_WORKER_WHISPER_COMPUTE_TYPE").ToLowerInvariant()
 $DiarizationDevice = (Get-EnvValue -Name "TOOLS_WORKER_DIARIZATION_DEVICE").ToLowerInvariant()
 $DiarizationEnabled = Test-Truthy (Get-EnvValue -Name "TOOLS_WORKER_DIARIZATION_ENABLED")
+$ConfigBaseUrl = Get-EnvValue -Name "TOOLS_API_BASE_URL"
+$ConfigWorkerToken = Get-EnvValue -Name "TOOLS_WORKER_TOKEN"
+$CanRepairGeneratedCudaDefault = Test-CanRepairGeneratedCudaDefault `
+    -FreshConfig $FreshConfig `
+    -ServiceExists ($null -ne $ExistingService) `
+    -BaseUrl $ConfigBaseUrl `
+    -WorkerToken $ConfigWorkerToken `
+    -WhisperDevice $WhisperDevice `
+    -WhisperComputeType $WhisperComputeType
 
 if ($WhisperDevice -eq "cuda") {
     if (-not $NativeNvidia) {
@@ -178,17 +188,21 @@ if ($WhisperDevice -eq "cuda") {
             Where-Object { $_ }
     )
 
-    if ($FreshConfig) {
+    $RepairGeneratedCudaDefault = $CanRepairGeneratedCudaDefault -and ($SupportedComputeTypes -notcontains $WhisperComputeType)
+    if ($FreshConfig -or $RepairGeneratedCudaDefault) {
         $SelectedComputeType = Select-CTranslate2ComputeType -SupportedTypes $SupportedComputeTypes
         if (-not $SelectedComputeType) {
             throw "CTranslate2 detected the NVIDIA GPU but reported no supported worker compute type. Reported types: $($SupportedComputeTypes -join ', ')."
         }
         Set-EnvValue -Name "TOOLS_WORKER_WHISPER_COMPUTE_TYPE" -Value $SelectedComputeType
         $WhisperComputeType = $SelectedComputeType
+        if ($RepairGeneratedCudaDefault) {
+            Write-Host "Recovered stale installer-generated CUDA compute type from a previous incomplete installation: $SelectedComputeType"
+        }
     }
 
     if ($WhisperComputeType -notin @("", "auto", "default") -and $SupportedComputeTypes -notcontains $WhisperComputeType) {
-        throw "Configured TOOLS_WORKER_WHISPER_COMPUTE_TYPE=$WhisperComputeType is not supported by this NVIDIA GPU. CTranslate2 reports: $($SupportedComputeTypes -join ', '). Update $EnvFile explicitly; existing configuration is never rewritten on reinstall."
+        throw "Configured TOOLS_WORKER_WHISPER_COMPUTE_TYPE=$WhisperComputeType is not supported by this NVIDIA GPU. CTranslate2 reports: $($SupportedComputeTypes -join ', '). Update $EnvFile explicitly; configured existing workers are never rewritten on reinstall."
     }
 }
 
@@ -206,7 +220,6 @@ if ($DiarizationEnabled -and $DiarizationDevice -eq "cuda") {
     }
 }
 
-$ExistingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($ExistingService) {
     if ($ExistingService.Status -ne "Stopped") {
         Stop-Service -Name $ServiceName -Force
