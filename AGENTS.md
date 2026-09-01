@@ -7,6 +7,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 ## Non-negotiable worker rules
 
 - Workers poll ToolsAPI for work. Do not require inbound connectivity from ToolsAPI to worker hosts.
+- Worker hosts run a continuous service/daemon around the poll loop. Do not replace polling with a periodic scheduler cadence.
 - Job claims must be atomic and produce an opaque lease identifier plus generation/attempt.
 - A worker may process or report on a job only while its current lease is valid.
 - Heartbeat/progress refreshes ownership through ToolsAPI. Workers never decide that their own lease timeout has been extended.
@@ -36,13 +37,16 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 
 ## Whisper runtime
 
-- Linux/CPU/CUDA and Windows/CPU/CUDA production installation uses the `whisper` package extra and `faster-whisper`.
+- Linux/CPU/CUDA and native Windows/CPU/CUDA production installation uses the `whisper` package extra and `faster-whisper`.
 - Apple Silicon macOS production installation uses the `whisper-mlx` package extra and `mlx-whisper`; select it through the advertised Metal/MLX device capability.
-- Speaker diarization uses `pyannote.audio` and `pyannote/speaker-diarization-community-1` on Linux, Windows and macOS. Diarization is enabled by default and is part of the normal Whisper runtime install.
-- Python 3.10 or newer is the worker runtime on every supported platform. Windows installation/service automation belongs in PowerShell; the runtime contract must not depend on an interactive `cmd.exe` session.
+- Speaker diarization uses `pyannote.audio` and `pyannote/speaker-diarization-community-1` on Linux, Windows and macOS. Diarization is enabled by default and must remain explicitly disableable with `TOOLS_WORKER_DIARIZATION_ENABLED=false`.
+- Python 3.10 or newer is the worker runtime on every supported platform.
+- Windows workers are native Windows services. Do not introduce WSL as a runtime dependency and do not use Task Scheduler as the worker execution model. PowerShell is for installation/service administration only; the worker process is the continuous Python poll loop.
+- Native Windows CUDA must be validated before a worker configured for `cuda` starts. An explicit CUDA configuration must fail closed when CTranslate2/faster-whisper or PyTorch/pyannote cannot see the NVIDIA GPU; never silently fall back to CPU.
+- A fresh Windows installation may select CUDA automatically when a native NVIDIA driver is detected, but existing `.env` values remain authoritative and must be preserved.
 - macOS launchd workers must receive a runtime `PATH` that can resolve the ffmpeg executable validated by the installer. Do not assume launchd inherits Homebrew paths from an interactive shell.
-- CPU, CUDA and Apple Silicon Metal/MLX are configuration choices; do not hardcode one device into the contract.
-- Pyannote device selection is independent from the Whisper backend. `auto` may choose CUDA when available and otherwise CPU; macOS MLX Whisper does not imply that pyannote must run on MLX/MPS.
+- CPU, CUDA and Apple Silicon Metal/MLX are configuration choices; do not hardcode one device into the cross-platform contract.
+- Pyannote device selection is independent from the Whisper backend. `auto` prefers CUDA, then Apple MPS when available, then CPU. macOS MLX Whisper does not require pyannote to use the same backend.
 - Supported models are explicit runtime configuration and are advertised on every claim.
 - Temporary inputs must live in a per-job directory and be removed only after the ownership lifecycle ends through acknowledged terminal state or lease loss.
 - Never dynamically install models, Python packages or arbitrary code based on job payloads.
@@ -51,7 +55,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 
 - `.env.example` is the committed configuration template.
 - A real host `.env` must be created during installation when missing.
-- The canonical production runtime configuration lives in the installed project directory at `/opt/toolsapi-worker/.env` by default on Ubuntu, `${HOME}/.local/toolsapi-worker/.env` by default on macOS, `%LOCALAPPDATA%\toolsapi-worker\.env` by default on Windows, or `${PREFIX}/.env` when a custom prefix is used.
+- The canonical production runtime configuration lives in the installed project directory at `/opt/toolsapi-worker/.env` by default on Ubuntu, `${HOME}/.local/toolsapi-worker/.env` by default on macOS, `%ProgramData%\Tornevall\toolsapi-worker\.env` by default on Windows, or `${PREFIX}/.env` when a custom prefix is used.
 - Do not move the worker runtime `.env` into `/etc` or another external configuration directory.
 - Install, reinstall and deploy must preserve an existing runtime `.env` and its values.
 - Uninstall preserves the project `.env` by default unless explicit configuration removal is requested.
@@ -75,13 +79,15 @@ Tests should cover at minimum when relevant:
 - diarization-required work is not claimed unless the worker advertises diarization support
 - a successful diarization maps speaker labels onto segments and submits safe structured metadata
 - a diarization failure preserves the transcript and never exposes the Hugging Face token value
+- explicit CUDA configuration does not silently fall back to CPU
+- pyannote `auto` device preference selects CUDA before Apple MPS before CPU
 - older ToolsAPI claim policies are rejected before live work is consumed
 - temporary media is cleaned after acknowledged terminal state or lease loss
 - installer is idempotent
 - existing runtime `.env` survives reinstall/deploy
 - install and uninstall preserve configuration according to documented policy
 - macOS launchd installer output can resolve the same ffmpeg directory validated during installation
-- Windows PowerShell installer/uninstaller scripts parse on a Windows runner and core protocol/runtime tests run on Windows without requiring a live provider or GPU
+- Windows PowerShell installer/uninstaller scripts parse on a Windows runner, the native Windows service module imports, and core protocol/runtime tests run on Windows without requiring a live provider or GPU
 
 ## Documentation
 
