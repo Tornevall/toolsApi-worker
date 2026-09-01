@@ -19,7 +19,10 @@ class WindowsGpuPolicyTest(unittest.TestCase):
             '$turingLegacy = Test-NvidiaNeedsCuda126PyTorch -ComputeCapability "7.5"; '
             '$autoIndex = Resolve-PyTorchIndexUrl -RequestedIndexUrl "" -ComputeCapability "6.1"; '
             '$overrideIndex = Resolve-PyTorchIndexUrl -RequestedIndexUrl "https://example.test/custom" -ComputeCapability "6.1"; '
-            'Write-Output "$pascalType|$modernType|$pascalLegacy|$turingLegacy|$autoIndex|$overrideIndex"'
+            '$repairFailedInstall = Test-CanRepairGeneratedCudaDefault -FreshConfig $false -ServiceExists $false -BaseUrl "https://tools.example.test" -WorkerToken "" -WhisperDevice "cuda" -WhisperComputeType "float16"; '
+            '$preserveConfigured = Test-CanRepairGeneratedCudaDefault -FreshConfig $false -ServiceExists $true -BaseUrl "https://tools.example.test" -WorkerToken "" -WhisperDevice "cuda" -WhisperComputeType "float16"; '
+            '$preserveCredential = Test-CanRepairGeneratedCudaDefault -FreshConfig $false -ServiceExists $false -BaseUrl "https://tools.example.test" -WorkerToken "configured-secret" -WhisperDevice "cuda" -WhisperComputeType "float16"; '
+            'Write-Output "$pascalType|$modernType|$pascalLegacy|$turingLegacy|$autoIndex|$overrideIndex|$repairFailedInstall|$preserveConfigured|$preserveCredential"'
         )
         completed = subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
@@ -30,7 +33,7 @@ class WindowsGpuPolicyTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            "int8_float32|float16|True|False|https://download.pytorch.org/whl/cu126|https://example.test/custom",
+            "int8_float32|float16|True|False|https://download.pytorch.org/whl/cu126|https://example.test/custom|True|False|False",
             completed.stdout.strip(),
         )
 
@@ -39,6 +42,8 @@ class WindowsGpuPolicyTest(unittest.TestCase):
         installer = (root / "scripts" / "install-windows.ps1").read_text(encoding="utf-8")
 
         self.assertIn("Select-CTranslate2ComputeType", installer)
+        self.assertIn("Test-CanRepairGeneratedCudaDefault", installer)
+        self.assertIn("Recovered stale installer-generated CUDA compute type", installer)
         self.assertIn("get_supported_compute_types('cuda')", installer)
         self.assertIn("torch torchaudio", installer)
         self.assertIn("x=torch.ones(1, device='cuda')", installer)
