@@ -24,9 +24,9 @@ class PyannoteDiarizer:
     def supported(self) -> bool:
         if not self.config.diarization_enabled or self.config.diarization_provider != "pyannote":
             return False
-        if self.pipeline_factory is not None:
-            return True
-        return self._runtime_dependencies_available()
+        if self.pipeline_factory is None and not self._runtime_dependencies_available():
+            return False
+        return self._configured_device_available()
 
     def diarize(
         self,
@@ -44,14 +44,7 @@ class PyannoteDiarizer:
             }
 
         if not self.supported:
-            error_code = "disabled"
-            error_message = "Speaker diarization is disabled on this worker."
-            if self.config.diarization_enabled and self.config.diarization_provider != "pyannote":
-                error_code = "unsupported_provider"
-                error_message = "Speaker diarization provider is unsupported on this worker."
-            elif self.config.diarization_enabled:
-                error_code = "missing_dependency"
-                error_message = "Speaker diarization dependencies are missing on this worker."
+            error_code, error_message = self._support_failure()
             return segments, {
                 "requested": True,
                 "status": "unavailable",
@@ -227,6 +220,35 @@ class PyannoteDiarizer:
 
     def _runtime_dependencies_available(self) -> bool:
         return self._module_available("pyannote.audio") and self._module_available("torch")
+
+    def _configured_device_available(self) -> bool:
+        device = self.config.diarization_device
+        if device == "cpu":
+            return True
+
+        try:
+            torch = self._torch()
+        except RuntimeError:
+            return False
+
+        if device == "auto":
+            return True
+        if device == "cuda":
+            return bool(getattr(getattr(torch, "cuda", None), "is_available", lambda: False)())
+        if device in {"mps", "metal"}:
+            backends = getattr(torch, "backends", None)
+            mps = getattr(backends, "mps", None) if backends is not None else None
+            return mps is not None and bool(getattr(mps, "is_available", lambda: False)())
+        return False
+
+    def _support_failure(self) -> tuple[str, str]:
+        if not self.config.diarization_enabled:
+            return "disabled", "Speaker diarization is disabled on this worker."
+        if self.config.diarization_provider != "pyannote":
+            return "unsupported_provider", "Speaker diarization provider is unsupported on this worker."
+        if self.pipeline_factory is None and not self._runtime_dependencies_available():
+            return "missing_dependency", "Speaker diarization dependencies are missing on this worker."
+        return "device_unavailable", "The configured speaker diarization device is unavailable on this worker."
 
     @staticmethod
     def _module_available(name: str) -> bool:
