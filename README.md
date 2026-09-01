@@ -41,13 +41,13 @@ Live polling requires ToolsAPI to advertise `claim_policy_version >= 2`. If an o
 
 ### Whisper and diarization backends
 
-Linux and Windows CPU/CUDA workers use `faster-whisper` through the `whisper` package extra.
+Linux and native Windows CPU/CUDA workers use `faster-whisper` through the `whisper` package extra.
 
 Apple Silicon macOS workers use `mlx-whisper` through the `whisper-mlx` package extra. The macOS installer configures `TOOLS_WORKER_WHISPER_DEVICE=metal`, which selects the MLX runtime and allows Whisper inference to use Apple Silicon acceleration. MLX model names are mapped to the corresponding `mlx-community` Whisper repositories.
 
-Speaker diarization uses `pyannote.audio` with `pyannote/speaker-diarization-community-1` on Linux, Windows and macOS. Diarization is enabled by default. The pyannote device is independent from the Whisper backend: `TOOLS_WORKER_DIARIZATION_DEVICE=auto` uses CUDA when PyTorch reports CUDA availability and otherwise uses CPU. On Apple Silicon, Whisper may therefore run through MLX while pyannote runs on CPU.
+Speaker diarization uses `pyannote.audio` with `pyannote/speaker-diarization-community-1` on Linux, Windows and macOS. Diarization is enabled by default and can be disabled explicitly with `TOOLS_WORKER_DIARIZATION_ENABLED=false`. The pyannote device is independent from the Whisper backend: `TOOLS_WORKER_DIARIZATION_DEVICE=auto` prefers CUDA, then Apple MPS when available, then CPU.
 
-Python 3.10 or newer is the runtime on all supported platforms. Windows does not require an interactive CMD session; installation/background startup is handled by PowerShell.
+Python 3.10 or newer is the runtime on all supported platforms. Windows runs as a native Windows service and does not require WSL or an interactive CMD session. PowerShell is used only for installation and service administration; the long-running process is the Python polling runtime.
 
 ### Initial input scope
 
@@ -146,34 +146,53 @@ REMOVE_CONFIG=true bash ./scripts/uninstall-macos.sh
 
 Requirements:
 
-- Windows 10/11 or Windows Server with PowerShell
-- Python 3.10 or newer
-- `ffmpeg` available to the Python/audio runtime
-- NVIDIA/CUDA is optional; CPU works as the fallback execution mode
+- Native Windows 10/11 or Windows Server with PowerShell
+- Python 3.10 or newer installed for Windows
+- `ffmpeg` in the Windows system `PATH` for pyannote audio handling
+- For NVIDIA GPU execution: a native Windows NVIDIA driver plus CUDA 12 cuBLAS and cuDNN 9 visible to the service process
+- A CUDA-enabled PyTorch build when pyannote should run on the NVIDIA GPU
 
-From PowerShell in a repository checkout:
+WSL is not used. The worker is installed directly on Windows so CUDA is exposed directly to faster-whisper/CTranslate2 and PyTorch/pyannote.
+
+From an elevated PowerShell in a repository checkout:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
 ```
 
-The default prefix is `%LOCALAPPDATA%\toolsapi-worker`. The installer creates an isolated `.venv`, installs `faster-whisper`, pyannote and PyTorch, preserves an existing `.env`, writes a PowerShell runner and registers a per-user Task Scheduler entry named `ToolsAPI Worker` at logon. The background runtime itself remains Python; no interactive `cmd.exe` session is required.
+The default prefix is `%ProgramData%\Tornevall\toolsapi-worker`. The installer creates an isolated `.venv`, installs `faster-whisper`, pyannote, PyTorch and the Windows service runtime, preserves an existing `.env`, and registers `ToolsAPIWorker` as an automatic Windows service. The service continuously runs the normal ToolsAPI poll loop; there is no Task Scheduler cadence and no interactive CMD process.
 
 Configure:
 
 ```text
-%LOCALAPPDATA%\toolsapi-worker\.env
+%ProgramData%\Tornevall\toolsapi-worker\.env
 ```
 
-For an NVIDIA worker, set `TOOLS_WORKER_WHISPER_DEVICE=cuda`, choose an appropriate faster-whisper compute type, and use `TOOLS_WORKER_DIARIZATION_DEVICE=auto` or `cuda` when the installed PyTorch runtime exposes CUDA.
+On a fresh installation, if native `nvidia-smi.exe` is available, the installer selects:
 
-To install files without registering the scheduled task:
+```text
+TOOLS_WORKER_WHISPER_DEVICE=cuda
+TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16
+TOOLS_WORKER_DIARIZATION_DEVICE=cuda
+```
+
+It then verifies both GPU paths before the service is installed. The faster-whisper probe requires CTranslate2 to see a CUDA device with a GPU compute type. The diarization probe requires `torch.cuda.is_available()` to be true. An explicitly configured `cuda` device never silently falls back to CPU.
+
+If the normal PyTorch dependency resolved to a CPU-only build, rerun the installer with the official CUDA wheel index appropriate for the host, for example:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -NoScheduledTask
+powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -TorchIndexUrl "<official PyTorch CUDA index URL>"
 ```
 
-Uninstall while preserving `.env`:
+The installer deliberately does not hardcode a CUDA-specific PyTorch index because the supported CUDA wheel channel changes independently of this repository. Use the current official PyTorch CUDA index for the installed driver/toolchain.
+
+To intentionally disable speaker diarization while keeping Whisper running:
+
+```text
+TOOLS_WORKER_DIARIZATION_ENABLED=false
+```
+
+Uninstall the Windows service and runtime while preserving `.env`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-windows.ps1
@@ -237,9 +256,9 @@ TOOLS_WORKER_TEMP_ROOT=
 
 `TOOLS_WORKER_DIARIZATION_HF_TOKEN` is only used locally to acquire/access the pyannote model. The worker never submits its value to ToolsAPI. It may report only whether a token was present. `TOOLS_WORKER_DIARIZATION_MODEL_DIR` can point at an already available local Community-1 directory and avoids requiring the job payload to choose or install code.
 
-For a CUDA worker, set `TOOLS_WORKER_WHISPER_DEVICE=cuda` and a suitable `faster-whisper` compute type such as `float16`.
+For a CUDA worker, set `TOOLS_WORKER_WHISPER_DEVICE=cuda` and a suitable `faster-whisper` compute type such as `float16`. Native Windows CUDA requires CUDA 12 cuBLAS and cuDNN 9 for current CTranslate2/faster-whisper releases.
 
-For Apple Silicon, use `TOOLS_WORKER_WHISPER_DEVICE=metal` and `TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16`. The device value is advertised to ToolsAPI and selects the MLX Whisper backend locally. ToolsAPI remains the authority that decides whether a job is eligible.
+For Apple Silicon, use `TOOLS_WORKER_WHISPER_DEVICE=metal` and `TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16`. The device value is advertised to ToolsAPI and selects the MLX Whisper backend locally. `TOOLS_WORKER_DIARIZATION_DEVICE=auto` prefers Apple MPS for pyannote when PyTorch reports it available and otherwise uses CPU. ToolsAPI remains the authority that decides whether a job is eligible.
 
 ## Development and tests
 
@@ -251,7 +270,7 @@ make smoke-install
 
 Protocol/runtime unit tests do not require loading a real Whisper or pyannote model. Diarization tests use injected deterministic pipeline doubles and do not make live Hugging Face calls. The Ubuntu system-install GitHub Actions jobs exercise the production `whisper` dependency extra. CI also verifies that `make install` works on macOS without modifying managed system Python and validates that the generated launchd service receives the resolved ffmpeg directory in PATH.
 
-CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus Ubuntu root/systemd install-reinstall-uninstall coverage, macOS local/install coverage and Windows core protocol/runtime tests with PowerShell installer syntax validation.
+CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus Ubuntu root/systemd install-reinstall-uninstall coverage, macOS local/install coverage and Windows native protocol/runtime tests with PowerShell/service syntax validation. CI does not pretend to provide a physical NVIDIA GPU; native CUDA is validated by the Windows installer on actual GPU hosts before the service starts.
 
 ## Deployment
 
