@@ -47,17 +47,17 @@ class ToolsApiClientTest(unittest.TestCase):
             "worker-mobile-slow",
         )
 
-    def claim(self, input_descriptor=None):
+    def claim(self, input_descriptor=None, diarization_requested=False):
         return WhisperClaim(
             job_id=123,
             lease_id="lease-abc",
             generation=2,
             contract="whisper.transcribe",
-            contract_version=1,
-            lease_expires_at="2026-08-23T13:45:00+00:00",
+            contract_version=2,
+            lease_expires_at="2026-09-01T13:45:00+00:00",
             model="small",
             language="sv",
-            diarization_requested=False,
+            diarization_requested=diarization_requested,
             input=input_descriptor or {
                 "type": "url",
                 "url": "https://media.example.test/audio.mp3",
@@ -69,17 +69,17 @@ class ToolsApiClientTest(unittest.TestCase):
         urlopen.return_value = FakeResponse(
             {
                 "ok": True,
-                "claim_policy_version": 1,
+                "claim_policy_version": 2,
                 "job": {
                     "job_id": 123,
                     "lease_id": "lease-abc",
                     "generation": 2,
                     "contract": "whisper.transcribe",
-                    "contract_version": 1,
-                    "lease_expires_at": "2026-08-23T13:45:00+00:00",
+                    "contract_version": 2,
+                    "lease_expires_at": "2026-09-01T13:45:00+00:00",
                     "model": "small",
                     "language": "sv",
-                    "diarization_requested": False,
+                    "diarization_requested": True,
                     "input": {
                         "type": "url",
                         "url": "https://media.example.test/audio.mp3",
@@ -93,21 +93,23 @@ class ToolsApiClientTest(unittest.TestCase):
             device="cpu",
             compute_type="int8",
             accepts_url_sources=False,
+            supports_diarization=True,
         )
 
         self.assertIsInstance(claim, WhisperClaim)
         self.assertEqual(123, claim.job_id)
         self.assertEqual(2, claim.generation)
-        self.assertEqual("url", claim.input_type)
+        self.assertTrue(claim.diarization_requested)
         request = urlopen.call_args.args[0]
         self.assertEqual("Bearer worker-secret", request.get_header("Authorization"))
         self.assertEqual("worker-mobile-slow", request.get_header("X-tools-worker-id"))
         body = json.loads(request.data.decode("utf-8"))
-        self.assertEqual(1, body["contract_version"])
+        self.assertEqual(2, body["contract_version"])
         self.assertEqual(["small", "medium"], body["models"])
         self.assertEqual("cpu", body["device"])
         self.assertEqual("int8", body["compute_type"])
         self.assertFalse(body["accepts_url_sources"])
+        self.assertTrue(body["supports_diarization"])
 
     @patch("urllib.request.urlopen")
     def test_claim_returns_none_when_queue_is_empty(self, urlopen):
@@ -116,28 +118,29 @@ class ToolsApiClientTest(unittest.TestCase):
                 "ok": True,
                 "job": None,
                 "contract": "whisper.transcribe",
-                "contract_version": 1,
-                "claim_policy_version": 1,
+                "contract_version": 2,
+                "claim_policy_version": 2,
             }
         )
 
         self.assertIsNone(self.client.claim_whisper())
 
     @patch("urllib.request.urlopen")
-    def test_claim_refuses_toolsapi_without_capability_gate(self, urlopen):
+    def test_claim_refuses_toolsapi_without_current_capability_gate(self, urlopen):
         urlopen.return_value = FakeResponse(
             {
                 "ok": True,
                 "job": None,
                 "contract": "whisper.transcribe",
-                "contract_version": 1,
+                "contract_version": 2,
+                "claim_policy_version": 1,
             }
         )
 
         with self.assertRaises(WorkerApiError) as caught:
             self.client.claim_whisper()
 
-        self.assertIn("capability-gated", str(caught.exception))
+        self.assertIn("diarization-aware", str(caught.exception))
 
     @patch("urllib.request.urlopen")
     def test_progress_sends_current_lease_and_generation(self, urlopen):
@@ -195,13 +198,21 @@ class ToolsApiClientTest(unittest.TestCase):
             FakeResponse({"ok": True, "accepted": True, "duplicate": False, "job": {"id": 123, "status": "completed"}}),
             FakeResponse({"ok": True, "accepted": True, "duplicate": True, "job": {"id": 123, "status": "queued"}}),
         ]
-        claim = self.claim()
+        claim = self.claim(diarization_requested=True)
 
         completed = self.client.complete_whisper(
             claim,
             "Transcript",
-            [{"start": 0, "end": 1.0, "text": "Transcript"}],
+            [{"start": 0, "end": 1.0, "text": "Transcript", "speaker_label": "SPEAKER_00"}],
             {"engine": "faster-whisper", "device": "cpu"},
+            {
+                "requested": True,
+                "status": "completed",
+                "provider": "pyannote",
+                "speaker_count": 1,
+                "speaker_turns": [{"start": 0, "end": 1.0, "speaker": "SPEAKER_00"}],
+                "hf_token_present": True,
+            },
         )
         failed = self.client.fail_whisper(claim, "worker_error", "Process failed", True)
 
@@ -212,6 +223,8 @@ class ToolsApiClientTest(unittest.TestCase):
         self.assertEqual("lease-abc", completion_body["lease_id"])
         self.assertEqual(2, completion_body["generation"])
         self.assertEqual("Transcript", completion_body["transcript_text"])
+        self.assertEqual("completed", completion_body["diarization"]["status"])
+        self.assertTrue(completion_body["diarization"]["hf_token_present"])
         failure_request = urlopen.call_args_list[1].args[0]
         failure_body = json.loads(failure_request.data.decode("utf-8"))
         self.assertEqual("worker_error", failure_body["error_code"])
@@ -250,14 +263,14 @@ class ToolsApiClientTest(unittest.TestCase):
         urlopen.return_value = FakeResponse(
             {
                 "ok": True,
-                "claim_policy_version": 1,
+                "claim_policy_version": 2,
                 "job": {
                     "job_id": 123,
                     "lease_id": "lease-abc",
                     "generation": 2,
                     "contract": "whisper.transcribe",
                     "contract_version": 99,
-                    "lease_expires_at": "2026-08-23T13:45:00+00:00",
+                    "lease_expires_at": "2026-09-01T13:45:00+00:00",
                     "input": {"type": "url", "url": "https://media.example.test/audio.mp3"},
                 },
             }
