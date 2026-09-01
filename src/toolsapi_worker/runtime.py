@@ -94,6 +94,42 @@ class WhisperResult:
     runtime: dict[str, Any]
 
 
+def validate_whisper_runtime_device(config: WorkerConfig, ctranslate2_module: Any | None = None) -> None:
+    if config.whisper_device != "cuda":
+        return
+
+    module = ctranslate2_module
+    if module is None:
+        try:
+            import ctranslate2 as module
+        except (ImportError, ModuleNotFoundError) as exc:
+            raise RuntimeError(
+                "Configured CUDA Whisper runtime requires CTranslate2/faster-whisper to be installed."
+            ) from exc
+
+    try:
+        device_count = int(module.get_cuda_device_count())
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("Configured CUDA Whisper runtime could not query native CUDA devices.") from exc
+    if device_count < 1:
+        raise RuntimeError("Configured CUDA Whisper runtime is unavailable on this worker.")
+
+    try:
+        supported_compute_types = {
+            str(value).strip().lower()
+            for value in module.get_supported_compute_types("cuda")
+            if str(value).strip()
+        }
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("Configured CUDA Whisper runtime could not query supported compute types.") from exc
+
+    compute_type = config.whisper_compute_type.strip().lower()
+    if compute_type not in {"", "auto", "default"} and compute_type not in supported_compute_types:
+        raise RuntimeError(
+            f"Configured CUDA Whisper compute type {config.whisper_compute_type!r} is unavailable on this worker."
+        )
+
+
 class FasterWhisperHandler:
     def __init__(
         self,
@@ -301,6 +337,14 @@ class WorkerRuntime:
 
     def run_forever(self) -> None:
         self.config.validate_protocol_configuration()
+        validate_whisper_runtime_device(self.config)
+        if (
+            self.config.diarization_enabled
+            and self.config.diarization_device in {"cuda", "mps", "metal"}
+            and not bool(getattr(self.diarizer, "supported", False))
+        ):
+            raise RuntimeError("Configured speaker diarization accelerator is unavailable on this worker.")
+
         while True:
             try:
                 claim = self.client.claim_whisper(
