@@ -13,7 +13,7 @@ _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 def read_env_file(path: str | Path) -> dict[str, str]:
     values: dict[str, str] = {}
     env_path = Path(path).expanduser()
-    for line_number, raw_line in enumerate(env_path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, raw_line in enumerate(env_path.read_text(encoding="utf-8-sig").splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
