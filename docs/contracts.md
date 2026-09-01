@@ -17,7 +17,7 @@ The live `whisper.transcribe` claim request advertises the worker execution capa
 }
 ```
 
-ToolsAPI must leave incompatible jobs queued rather than mutating them. A job with `diarization_requested=true` may only be assigned to a version 2 worker that advertises `supports_diarization=true`.
+ToolsAPI must leave incompatible jobs queued rather than mutating them. A job with `diarization_requested=true` may only be assigned to a version 2 worker that advertises `supports_diarization=true`. Diarization-only work is also restricted to workers that truthfully advertise this capability.
 
 The current worker runtime defaults to `accepts_url_sources=false`, so live execution is restricted to Tools-hosted upload/staged media while URL fetching remains outside the worker runtime.
 
@@ -33,7 +33,7 @@ Workers authenticate with a dedicated bearer credential and stable worker id, th
 
 `POST /api/whisper/worker/claim`
 
-A claim contains the current lease/generation and an input descriptor:
+A claim contains the current lease/generation, an explicit operation and an input descriptor:
 
 ```json
 {
@@ -43,6 +43,7 @@ A claim contains the current lease/generation and an input descriptor:
   "lease_id": "opaque-value",
   "generation": 2,
   "lease_expires_at": "2026-09-01T13:45:00+00:00",
+  "operation": "transcribe",
   "model": "small",
   "language": "sv",
   "diarization_requested": true,
@@ -52,6 +53,13 @@ A claim contains the current lease/generation and an input descriptor:
   }
 }
 ```
+
+Supported operations are:
+
+- `transcribe`: run Whisper and, when requested, speaker diarization before transcript completion.
+- `diarize`: run only speaker diarization against retained media for an already completed transcript. Whisper must not run and the worker must not submit transcript text or transcript segments through the transcript-completion endpoint.
+
+If `operation` is omitted, workers treat the claim as `transcribe` for compatibility with earlier contract-version-2 responses. Unknown operations are rejected.
 
 `input.type` remains `tools_media` or `url` at contract level. Live worker execution currently accepts `tools_media` only. URL-source jobs are not remotely assigned unless a worker explicitly advertises URL support.
 
@@ -68,9 +76,15 @@ ToolsAPI validates current ownership before streaming the file. HTTP `409` means
 
 ## Heartbeat/progress
 
-Workers send progress through:
+Transcript operations send progress through:
 
 `POST /api/whisper/worker/jobs/{job_id}/progress`
+
+Diarization-only operations send progress through:
+
+`POST /api/whisper/worker/jobs/{job_id}/diarization/progress`
+
+Both carry the current lease and generation:
 
 ```json
 {
@@ -86,9 +100,9 @@ The production runtime reports heartbeat independently of transcript production 
 
 The worker host itself is a continuously running service/daemon around this poll loop. Windows uses a native Windows service, Linux uses systemd and macOS uses launchd. Task Scheduler is not the worker execution model.
 
-## Completion
+## Transcript completion
 
-Workers submit completed transcripts through:
+`operation=transcribe` workers submit completed transcripts through:
 
 `POST /api/whisper/worker/jobs/{job_id}/complete`
 
@@ -126,13 +140,38 @@ Workers submit completed transcripts through:
 }
 ```
 
-The `diarization` object is safe metadata only. It must never include a Hugging Face token value. `hf_token_present` is a boolean diagnostic and may be submitted. When diarization fails, the worker still submits the completed transcript with a `failed` or `unavailable` diarization status plus a safe error code/message.
+The `diarization` object is safe metadata only. It must never include a Hugging Face token value. `hf_token_present` is a boolean diagnostic and may be submitted. When diarization fails after a successful transcription, the worker still submits the completed transcript with a `failed` or `unavailable` diarization status plus a safe error code/message.
 
 ToolsAPI persists the transcript and normalized diarization result before acknowledging it. Version 2 worker results must not cause a second local diarization pass. The exact same terminal submission may be retried after a lost acknowledgement and returns `duplicate=true`. A conflicting terminal payload for the same lease generation is rejected with HTTP `409`.
 
+## Diarization-only completion
+
+`operation=diarize` is isolated from transcript completion and uses:
+
+`POST /api/whisper/worker/jobs/{job_id}/diarization`
+
+```json
+{
+  "lease_id": "opaque-value",
+  "generation": 3,
+  "diarization": {
+    "requested": true,
+    "status": "completed",
+    "provider": "pyannote",
+    "speaker_count": 2,
+    "speaker_turns": [
+      {"start": 0.0, "end": 2.1, "speaker": "SPEAKER_00"},
+      {"start": 2.1, "end": 4.0, "speaker": "SPEAKER_01"}
+    ]
+  }
+}
+```
+
+A diarization-only worker must never send `transcript_text` or transcript `segments` as part of this terminal operation and must never call the transcript failure endpoint. A diarization-only failure is returned as a safe diarization result with `status=failed` or `status=unavailable`, leaving the already completed transcript untouched.
+
 ## Failure
 
-Structured failures use:
+Structured transcript failures use:
 
 `POST /api/whisper/worker/jobs/{job_id}/fail`
 
@@ -146,9 +185,9 @@ Structured failures use:
 }
 ```
 
-This endpoint is for failures that prevent a usable transcript. Diarization-only failures belong in the successful completion payload so the transcript remains available.
+This endpoint is for failures that prevent a usable transcript. A diarization failure after successful transcription is represented in the transcript completion's diarization metadata. A diarization-only operation uses its dedicated diarization terminal endpoint instead and can therefore never turn an existing completed transcript into a failed transcript job.
 
-Retryable failures return the job to the ToolsAPI queue while attempts remain. Exact duplicate failure submissions are idempotent.
+Retryable transcript failures return the job to the ToolsAPI queue while attempts remain. Exact duplicate failure submissions are idempotent.
 
 ## Worker ownership rule
 
@@ -166,4 +205,4 @@ Python 3.10 or newer is required on every supported platform. Windows service in
 
 ## Compatibility
 
-Contract version 2 adds explicit diarization capability and structured diarization completion data. Version 1 workers must not claim version 2 jobs. Existing API route paths remain unchanged and unversioned.
+Contract version 2 adds explicit diarization capability, structured diarization result data and the `operation` discriminator used for transcript versus diarization-only work. Version 1 workers must not claim version 2 jobs. Existing API route paths remain unchanged and unversioned.

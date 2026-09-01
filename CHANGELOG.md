@@ -18,6 +18,7 @@ All notable changes to toolsApi-worker are documented here.
 - Apple Silicon MLX Whisper runtime selected by Metal/MLX device capability.
 - Pyannote Community-1 speaker diarization as part of the normal Whisper runtime on Linux, Windows and macOS.
 - Diarization capability advertisement and contract version 2 completion payloads with speaker turns, speaker-labelled segments and safe token-presence diagnostics.
+- Diarization-only `operation=diarize` claims with dedicated progress/result endpoints so an available diarization-capable worker can process retained media without rerunning Whisper or modifying an existing transcript.
 - Transcript-preserving diarization failure handling so speaker processing can fail independently from a successful transcription.
 - Native Windows service support through pywin32. The service continuously runs the normal polling loop and does not depend on Task Scheduler, WSL or an interactive CMD session.
 - Native Windows NVIDIA detection and fail-closed CUDA validation for both CTranslate2/faster-whisper and PyTorch/pyannote before a CUDA-configured service starts.
@@ -34,6 +35,7 @@ All notable changes to toolsApi-worker are documented here.
 - Worker protocol handling that preserves lease id/generation and treats HTTP 409 as loss of ownership or terminal-payload conflict.
 - Regression coverage for protocol, runtime heartbeat, terminal retry, temp cleanup, diarization, GPU preference, configuration and installer behavior.
 - Deterministic regression coverage proving the lease heartbeat continues while diarization itself is blocked.
+- Regression coverage proving diarization-only claims never invoke Whisper, never submit transcript fields and cannot turn a completed transcript into a failed transcript job.
 - Documentation requirements and CI validation baseline.
 - Ubuntu installer, Makefile, systemd service, installer smoke tests and guarded deployment workflow.
 - Canonical runtime `.env` in the installed project directory at `/opt/toolsapi-worker/.env` on Ubuntu, `~/.local/toolsapi-worker/.env` on macOS and `%ProgramData%\Tornevall\toolsapi-worker\.env` on Windows.
@@ -42,6 +44,7 @@ All notable changes to toolsApi-worker are documented here.
 ### Changed
 
 - `whisper.transcribe` is now contract version 2 and requires ToolsAPI `claim_policy_version >= 2`, preventing older workers/servers from silently consuming diarization-required jobs.
+- Contract-version-2 claims now accept `operation=transcribe|diarize`; omitted operation remains compatible as `transcribe`, while unknown operations fail closed.
 - Speaker diarization is enabled by default in worker configuration, can be explicitly disabled with `TOOLS_WORKER_DIARIZATION_ENABLED=false`, and uses `pyannote/speaker-diarization-community-1`.
 - Diarization capability advertisement now verifies both the installed pyannote/PyTorch runtime and the configured execution device; an explicit CUDA or Apple GPU device is not advertised when PyTorch cannot use it.
 - Explicit accelerator configuration is revalidated on every worker process start before the first claim, so preserved `.env` changes, driver/library changes, or CPU-only PyTorch/CTranslate2 builds cannot cause a worker to advertise and consume GPU work it cannot execute.
@@ -69,6 +72,7 @@ All notable changes to toolsApi-worker are documented here.
 - Runtime `.env` and credentials are never committed; `.env.example` is the repository template.
 - Hugging Face token values stay local to the worker and are never logged or submitted to ToolsAPI; only a boolean token-presence diagnostic may leave the worker.
 - Unclassified pyannote/provider exceptions are reduced to a generic safe error before heartbeat or completion reporting, so configured token values and raw provider text cannot leave the worker through fallback diagnostics.
+- Diarization-only terminal payloads cannot contain transcript text or transcript segments and cannot use the transcript failure endpoint.
 - macOS launchd and Windows service startup do not source `.env` as executable shell code; the worker parses configuration data directly so credential values are not executed by a shell.
 - Worker client error messages do not include the configured bearer credential.
 - Workers refuse live claims from ToolsAPI deployments that do not advertise the current diarization-aware capability policy.

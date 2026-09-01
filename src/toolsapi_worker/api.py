@@ -29,6 +29,7 @@ class WhisperClaim:
     contract: str
     contract_version: int
     lease_expires_at: str
+    operation: str
     model: str
     language: str
     diarization_requested: bool
@@ -104,6 +105,10 @@ class ToolsApiClient:
                 f"Unsupported Whisper worker contract {contract!r} version {contract_version}"
             )
 
+        operation = str(job.get("operation") or "transcribe").strip().lower()
+        if operation not in {"transcribe", "diarize"}:
+            raise WorkerApiError(f"Unsupported Whisper worker operation {operation!r}")
+
         input_descriptor = job.get("input")
         if not isinstance(input_descriptor, dict):
             raise WorkerApiError("ToolsAPI returned a Whisper claim without an input descriptor")
@@ -118,9 +123,10 @@ class ToolsApiClient:
                 contract=contract,
                 contract_version=contract_version,
                 lease_expires_at=str(job["lease_expires_at"]),
+                operation=operation,
                 model=str(job.get("model") or ""),
                 language=str(job.get("language") or ""),
-                diarization_requested=bool(job.get("diarization_requested", True)),
+                diarization_requested=bool(job.get("diarization_requested", operation == "diarize")),
                 input=dict(input_descriptor),
             )
         except (KeyError, TypeError, ValueError) as exc:
@@ -146,9 +152,10 @@ class ToolsApiClient:
         if stage_detail:
             body["stage_detail"] = stage_detail
 
+        suffix = "diarization/progress" if claim.operation == "diarize" else "progress"
         payload = self._request_json(
             "POST",
-            f"/api/whisper/worker/jobs/{claim.job_id}/progress",
+            f"/api/whisper/worker/jobs/{claim.job_id}/{suffix}",
             body,
         )
         job = payload.get("job")
@@ -205,6 +212,8 @@ class ToolsApiClient:
         runtime: dict[str, Any] | None = None,
         diarization: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if claim.operation != "transcribe":
+            raise ValueError("Diarization-only claims must not submit transcript completion")
         if not transcript_text.strip():
             raise ValueError("transcript_text is required")
 
@@ -224,6 +233,27 @@ class ToolsApiClient:
             raise WorkerApiError("ToolsAPI did not acknowledge the Whisper completion")
         return payload
 
+    def complete_whisper_diarization(
+        self,
+        claim: WhisperClaim,
+        diarization: dict[str, Any],
+    ) -> dict[str, Any]:
+        if claim.operation != "diarize":
+            raise ValueError("Diarization completion requires a diarization-only claim")
+
+        payload = self._request_json(
+            "POST",
+            f"/api/whisper/worker/jobs/{claim.job_id}/diarization",
+            {
+                "lease_id": claim.lease_id,
+                "generation": claim.generation,
+                "diarization": dict(diarization),
+            },
+        )
+        if payload.get("accepted") is not True:
+            raise WorkerApiError("ToolsAPI did not acknowledge the Whisper diarization result")
+        return payload
+
     def fail_whisper(
         self,
         claim: WhisperClaim,
@@ -231,6 +261,8 @@ class ToolsApiClient:
         message: str,
         retryable: bool = True,
     ) -> dict[str, Any]:
+        if claim.operation == "diarize":
+            raise ValueError("Diarization-only claims must return a diarization result instead of failing the transcript job")
         if not error_code.strip() or not message.strip():
             raise ValueError("error_code and message are required")
 

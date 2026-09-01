@@ -88,6 +88,7 @@ class WorkerDiarizationTest(unittest.TestCase):
             contract="whisper.transcribe",
             contract_version=2,
             lease_expires_at="2026-09-01T12:00:00Z",
+            operation="transcribe",
             model="small",
             language="sv",
             diarization_requested=requested,

@@ -19,6 +19,7 @@ class FakeClient:
     def __init__(self):
         self.progress_calls = []
         self.complete_calls = []
+        self.diarization_complete_calls = []
         self.fail_calls = []
         self.complete_failures_remaining = 0
 
@@ -41,6 +42,10 @@ class FakeClient:
             raise WorkerApiError("temporary network failure")
         return {"ok": True, "accepted": True}
 
+    def complete_whisper_diarization(self, claim, diarization):
+        self.diarization_complete_calls.append((claim, dict(diarization)))
+        return {"ok": True, "accepted": True}
+
     def fail_whisper(self, claim, error_code, message, retryable=True):
         self.fail_calls.append((claim, error_code, message, retryable))
         return {"ok": True, "accepted": True}
@@ -50,8 +55,10 @@ class SlowHandler:
     def __init__(self, delay=0.12, fail=False):
         self.delay = delay
         self.fail = fail
+        self.calls = 0
 
     def transcribe(self, claim, input_path, heartbeat):
+        self.calls += 1
         heartbeat.update(30, "Transcribing", "Slow test handler")
         time.sleep(self.delay)
         heartbeat.assert_owned()
@@ -85,6 +92,13 @@ class FakeDiarizer:
             else [],
             "hf_token_present": True,
         }
+
+
+class FailingDiarizer:
+    supported = True
+
+    def diarize(self, claim, input_path, segments, heartbeat):
+        raise RuntimeError("provider exploded with hf_secret_never_return")
 
 
 class BlockingDiarizer:
@@ -138,7 +152,7 @@ class WorkerRuntimeTest(unittest.TestCase):
             temp_root=str(temp_root),
         )
 
-    def claim(self, model="small", diarization_requested=True):
+    def claim(self, model="small", diarization_requested=True, operation="transcribe"):
         return WhisperClaim(
             job_id=123,
             lease_id="lease-abc",
@@ -146,6 +160,7 @@ class WorkerRuntimeTest(unittest.TestCase):
             contract="whisper.transcribe",
             contract_version=2,
             lease_expires_at="2026-09-01T14:30:00+00:00",
+            operation=operation,
             model=model,
             language="sv",
             diarization_requested=diarization_requested,
@@ -224,6 +239,52 @@ class WorkerRuntimeTest(unittest.TestCase):
             self.assertEqual("SPEAKER_00", first[2][0]["speaker_label"])
             self.assertEqual("completed", first[4]["status"])
 
+    def test_diarization_only_claim_never_runs_whisper_or_submits_transcript(self):
+        with tempfile.TemporaryDirectory() as root:
+            client = FakeClient()
+            handler = SlowHandler(delay=0.01, fail=True)
+            diarizer = FakeDiarizer()
+            runtime = WorkerRuntime(
+                self.config(root),
+                client=client,
+                handler=handler,
+                diarizer=diarizer,
+                sleep=lambda seconds: None,
+            )
+
+            runtime.process_claim(self.claim(operation="diarize", diarization_requested=True))
+
+            self.assertEqual(0, handler.calls)
+            self.assertEqual(1, len(diarizer.calls))
+            self.assertEqual([], diarizer.calls[0][2])
+            self.assertEqual([], client.complete_calls)
+            self.assertEqual([], client.fail_calls)
+            self.assertEqual(1, len(client.diarization_complete_calls))
+            self.assertEqual("completed", client.diarization_complete_calls[0][1]["status"])
+            self.assertEqual([], list(Path(root).iterdir()))
+
+    def test_diarization_only_runtime_failure_cannot_fail_or_replace_transcript(self):
+        with tempfile.TemporaryDirectory() as root:
+            client = FakeClient()
+            runtime = WorkerRuntime(
+                self.config(root),
+                client=client,
+                handler=SlowHandler(delay=0.01, fail=True),
+                diarizer=FailingDiarizer(),
+                sleep=lambda seconds: None,
+            )
+
+            runtime.process_claim(self.claim(operation="diarize", diarization_requested=True))
+
+            self.assertEqual([], client.complete_calls)
+            self.assertEqual([], client.fail_calls)
+            self.assertEqual(1, len(client.diarization_complete_calls))
+            payload = client.diarization_complete_calls[0][1]
+            self.assertEqual("failed", payload["status"])
+            self.assertEqual("worker_error", payload["error_code"])
+            self.assertNotIn("hf_secret_never_return", str(payload))
+            self.assertEqual([], list(Path(root).iterdir()))
+
     def test_non_diarization_job_skips_diarizer(self):
         with tempfile.TemporaryDirectory() as root:
             client = FakeClient()
@@ -271,6 +332,7 @@ class WorkerRuntimeTest(unittest.TestCase):
                 contract=claim.contract,
                 contract_version=claim.contract_version,
                 lease_expires_at=claim.lease_expires_at,
+                operation=claim.operation,
                 model=claim.model,
                 language=claim.language,
                 diarization_requested=False,
