@@ -381,6 +381,15 @@ class WorkerRuntime:
             input_path = self._prepare_input(claim, job_dir)
             heartbeat.assert_owned()
 
+            if claim.operation == "diarize":
+                heartbeat.update(20, "Speaker diarization", "Running speaker diarization on retained media.")
+                _, diarization = self.diarizer.diarize(claim, input_path, [], heartbeat)
+                heartbeat.assert_owned()
+                heartbeat.update(99, "Finalizing", "Submitting speaker-diarization result to ToolsAPI.")
+                heartbeat.stop()
+                self._retry_terminal(lambda: self.client.complete_whisper_diarization(claim, diarization))
+                return
+
             result = self.handler.transcribe(claim, input_path, heartbeat)
             heartbeat.assert_owned()
 
@@ -410,14 +419,34 @@ class WorkerRuntime:
             raise
         except Exception as exc:
             heartbeat.stop()
-            self._retry_terminal(
-                lambda: self.client.fail_whisper(
-                    claim,
-                    "transcription_failed",
-                    self._safe_error_message(exc),
-                    retryable=True,
+            if claim.operation == "diarize":
+                self._retry_terminal(
+                    lambda: self.client.complete_whisper_diarization(
+                        claim,
+                        {
+                            "requested": True,
+                            "status": "failed",
+                            "provider": self.config.diarization_provider,
+                            "model": self.config.diarization_model,
+                            "error_code": "worker_error",
+                            "error_message": "Speaker diarization failed on this worker.",
+                            "speaker_turns": [],
+                            "speaker_labels": [],
+                            "speaker_count": 0,
+                            "labelled_segment_count": 0,
+                            "hf_token_present": bool(self.config.diarization_hf_token),
+                        },
+                    )
                 )
-            )
+            else:
+                self._retry_terminal(
+                    lambda: self.client.fail_whisper(
+                        claim,
+                        "transcription_failed",
+                        self._safe_error_message(exc),
+                        retryable=True,
+                    )
+                )
         finally:
             heartbeat.stop()
             shutil.rmtree(job_dir, ignore_errors=True)
