@@ -6,7 +6,10 @@
     <string>net.tornevall.toolsapi-worker</string>
     <key>ProgramArguments</key>
     <array>
-        <string>@PREFIX@/run-worker.sh</string>
+        <string>@PREFIX@/.venv/bin/toolsapi-worker</string>
+        <string>run</string>
+        <string>--env-file</string>
+        <string>@ENV_FILE@</string>
     </array>
     <key>WorkingDirectory</key>
     <string>@PREFIX@</string>
