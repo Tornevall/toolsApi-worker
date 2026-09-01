@@ -50,6 +50,31 @@ function Resolve-PyTorchIndexUrl {
     return ""
 }
 
+function Test-CanRepairGeneratedCudaDefault {
+    param(
+        [bool]$FreshConfig,
+        [bool]$ServiceExists,
+        [string]$BaseUrl,
+        [string]$WorkerToken,
+        [string]$WhisperDevice,
+        [string]$WhisperComputeType
+    )
+
+    if ($FreshConfig -or $ServiceExists) {
+        return $false
+    }
+
+    $base = $BaseUrl.Trim()
+    $token = $WorkerToken.Trim()
+    $device = $WhisperDevice.Trim().ToLowerInvariant()
+    $computeType = $WhisperComputeType.Trim().ToLowerInvariant()
+
+    return (-not $token) `
+        -and ($base -eq "" -or $base -eq "https://tools.example.test") `
+        -and $device -eq "cuda" `
+        -and $computeType -eq "float16"
+}
+
 function Get-NvidiaComputeCapability {
     param([string]$NvidiaSmi = "nvidia-smi.exe")
 
