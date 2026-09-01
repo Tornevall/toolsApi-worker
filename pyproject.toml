@@ -22,6 +22,9 @@ whisper-mlx = [
     "pyannote.audio>=4,<5",
     "torch>=2.2",
 ]
+windows = [
+    "pywin32>=306; platform_system == 'Windows'",
+]
 
 [project.scripts]
 toolsapi-worker = "toolsapi_worker.cli:main"
