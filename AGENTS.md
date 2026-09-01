@@ -43,7 +43,12 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 - Speaker diarization uses `pyannote.audio` and `pyannote/speaker-diarization-community-1` on Linux, Windows and macOS. Diarization is enabled by default and must remain explicitly disableable with `TOOLS_WORKER_DIARIZATION_ENABLED=false`.
 - Python 3.10 or newer is the worker runtime on every supported platform.
 - Windows workers are native Windows services. Do not introduce WSL as a runtime dependency and do not use Task Scheduler as the worker execution model. PowerShell is for installation/service administration only; the worker process is the continuous Python poll loop.
-- Native Windows CUDA must be validated before a worker configured for `cuda` starts. An explicit CUDA configuration must fail closed when CTranslate2/faster-whisper or PyTorch/pyannote cannot see the NVIDIA GPU; never silently fall back to CPU.
+- Native Windows CUDA must be validated before a worker configured for `cuda` starts. An explicit CUDA configuration must fail closed when CTranslate2/faster-whisper or PyTorch/pyannote cannot execute on the NVIDIA GPU; never silently fall back to CPU.
+- Do not treat the maximum CUDA version printed by `nvidia-smi` as the installed worker runtime version. Current CTranslate2/faster-whisper Windows execution requires its documented CUDA 12 cuBLAS/cuDNN runtime even when a newer NVIDIA driver advertises CUDA 13 capability.
+- Fresh Windows NVIDIA installs must select the Whisper compute type from CTranslate2's actual reported CUDA capability instead of hard-coding fp16. Preserve preference for `float16`/`int8_float16` on capable GPUs, while allowing `int8_float32` or `float32` on Pascal-class devices such as compute capability 6.1.
+- Existing Windows `.env` values remain authoritative. An explicitly configured compute type that is unavailable on the detected GPU must fail clearly with the supported-type set rather than being rewritten.
+- PyTorch wheel selection for Windows diarization must consider GPU architecture, not only driver version. Maxwell/Pascal/Volta require the maintained CUDA 12.6 PyTorch compatibility channel while current CUDA 13 wheels target newer architectures; explicit installer overrides remain allowed.
+- Windows PyTorch CUDA preflight must execute a real CUDA tensor/kernel operation before accepting the host. `torch.cuda.is_available()` alone is not sufficient because an architecture-incompatible wheel can see the driver but fail when kernels execute.
 - Explicit accelerated runtime configuration must be revalidated at every worker process start before the first claim. Installer-time validation alone is insufficient because `.env`, drivers, CUDA libraries and PyTorch builds can change between starts.
 - A fresh Windows installation may select CUDA automatically when a native NVIDIA driver is detected, but existing `.env` values remain authoritative and must be preserved.
 - macOS launchd workers must receive a runtime `PATH` that can resolve the ffmpeg executable validated by the installer. Do not assume launchd inherits Homebrew paths from an interactive shell.
@@ -84,6 +89,7 @@ Tests should cover at minimum when relevant:
 - a diarization failure preserves the transcript and never exposes the Hugging Face token value
 - explicit CUDA configuration does not silently fall back to CPU
 - explicit accelerated devices are validated before capability advertisement and before the first live claim after every process start
+- Windows GPU policy covers Pascal compute capability 6.1, a modern fp16-capable capability set, compatible PyTorch CUDA channel selection and explicit index override behavior without requiring a physical CI GPU
 - pyannote `auto` device preference selects CUDA before Apple MPS before CPU
 - older ToolsAPI claim policies are rejected before live work is consumed
 - temporary media is cleaned after acknowledged terminal state or lease loss
