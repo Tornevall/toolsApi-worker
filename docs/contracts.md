@@ -25,7 +25,7 @@ A successful claim response must include `claim_policy_version >= 2`. Workers en
 
 The `device` and `compute_type` values describe the installed Whisper backend. CPU/CUDA values select `faster-whisper`; Apple Silicon workers advertise a Metal/MLX device value and use `mlx-whisper`. Speaker diarization remains pyannote-based on all supported platforms and has its own device selection.
 
-On Windows, `device=cuda` means native Windows CUDA. WSL is not part of the worker runtime. The installer validates that CTranslate2 can see the NVIDIA GPU before a CUDA-configured Windows service is allowed to start. When diarization is also configured for CUDA, PyTorch must independently report `torch.cuda.is_available()`.
+On Windows, `device=cuda` means native Windows CUDA. WSL is not part of the worker runtime. A fresh NVIDIA installation derives the advertised compute type from CTranslate2's actual capability set instead of assuming fp16; Pascal-class GPUs may therefore advertise `int8_float32` while newer GPUs can advertise `float16`. Existing explicit `.env` values are preserved and rejected clearly if unsupported. When diarization is configured for CUDA, the worker must prove that PyTorch can execute and synchronize a real CUDA tensor operation before advertising diarization support or polling for live work.
 
 ## Whisper claim
 
@@ -199,7 +199,7 @@ Temporary job media is isolated in a per-job directory and removed only when pro
 
 Linux and native Windows CPU/CUDA production installation uses the `whisper` package extra with `faster-whisper>=1.2.1,<2`, `pyannote.audio>=4,<5` and PyTorch. Apple Silicon macOS production installation uses the `whisper-mlx` package extra with `mlx-whisper>=0.4.3,<0.5`, `pyannote.audio>=4,<5` and PyTorch.
 
-Current faster-whisper/CTranslate2 CUDA execution requires CUDA 12 cuBLAS and cuDNN 9. Windows must expose the required native DLL directories through the service environment. A CUDA-enabled PyTorch build is independently required for pyannote CUDA execution. Explicit CUDA configuration is fail-closed rather than silently falling back to CPU.
+Current faster-whisper/CTranslate2 CUDA execution requires CUDA 12 cuBLAS and cuDNN 9. Windows must expose the required native DLL directories through the service environment. The `CUDA Version` field shown by `nvidia-smi` describes driver capability and does not select the worker runtime. Fresh Windows NVIDIA installs choose a CTranslate2 compute type from the device's reported set. Pyannote CUDA is independently validated through PyTorch; Maxwell/Pascal/Volta hosts use the maintained CUDA 12.6 PyTorch wheel channel because current CUDA 13 PyTorch builds no longer cover those architectures. Explicit CUDA configuration is fail-closed rather than silently falling back to CPU.
 
 Python 3.10 or newer is required on every supported platform. Windows service installation is PowerShell-based and does not require WSL or an interactive `cmd.exe` runtime. Both Whisper and pyannote modules are imported lazily so protocol-only deterministic tests do not require model loading or live Hugging Face access.
 
