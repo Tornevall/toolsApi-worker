@@ -1,6 +1,6 @@
 # Worker Contracts
 
-Worker contracts are versioned independently from deployment hostnames.
+Worker contracts are versioned independently from deployment hostnames. API route URLs are not versioned.
 
 ## Capability advertisement
 
@@ -8,19 +8,22 @@ The live `whisper.transcribe` claim request advertises the worker execution capa
 
 ```json
 {
-  "contract_version": 1,
+  "contract_version": 2,
   "models": ["small", "medium"],
   "device": "cpu",
   "compute_type": "int8",
-  "accepts_url_sources": false
+  "accepts_url_sources": false,
+  "supports_diarization": true
 }
 ```
 
-ToolsAPI must leave incompatible jobs queued rather than mutating them. The current worker runtime defaults to `accepts_url_sources=false`, so live execution is restricted to Tools-hosted upload/staged media while URL fetching remains outside the worker runtime.
+ToolsAPI must leave incompatible jobs queued rather than mutating them. A job with `diarization_requested=true` may only be assigned to a version 2 worker that advertises `supports_diarization=true`.
 
-A successful claim response must include `claim_policy_version >= 1`. Workers enabling live polling refuse claims from older ToolsAPI deployments that do not advertise this capability gate. This protects deployment order: the worker cannot start consuming jobs against an older server that would ignore its supported models or source restrictions.
+The current worker runtime defaults to `accepts_url_sources=false`, so live execution is restricted to Tools-hosted upload/staged media while URL fetching remains outside the worker runtime.
 
-The `device` and `compute_type` values also describe the installed execution backend. CPU/CUDA values select `faster-whisper`; Apple Silicon workers advertise a Metal/MLX device value and use `mlx-whisper`. This does not change the worker contract or ownership semantics.
+A successful claim response must include `claim_policy_version >= 2`. Workers enabling live polling refuse claims from older ToolsAPI deployments that do not advertise the diarization-aware capability gate. This protects deployment order: an old server cannot assign a requested diarization job to a worker without checking capability.
+
+The `device` and `compute_type` values describe the installed Whisper backend. CPU/CUDA values select `faster-whisper`; Apple Silicon workers advertise a Metal/MLX device value and use `mlx-whisper`. Speaker diarization remains pyannote-based on all supported platforms and has its own device selection.
 
 ## Whisper claim
 
@@ -34,10 +37,10 @@ A claim contains the current lease/generation and an input descriptor:
 {
   "job_id": 123,
   "contract": "whisper.transcribe",
-  "contract_version": 1,
+  "contract_version": 2,
   "lease_id": "opaque-value",
   "generation": 2,
-  "lease_expires_at": "2026-08-23T13:45:00+00:00",
+  "lease_expires_at": "2026-09-01T13:45:00+00:00",
   "model": "small",
   "language": "sv",
   "diarization_requested": true,
@@ -48,7 +51,7 @@ A claim contains the current lease/generation and an input descriptor:
 }
 ```
 
-`input.type` remains `tools_media` or `url` at contract level. Live worker execution currently accepts `tools_media` only. URL-source jobs are not remotely assigned unless a worker explicitly advertises URL support, and URL jobs that request speaker diarization remain local until the remote path can preserve that post-processing behavior.
+`input.type` remains `tools_media` or `url` at contract level. Live worker execution currently accepts `tools_media` only. URL-source jobs are not remotely assigned unless a worker explicitly advertises URL support.
 
 ## Lease-bound media
 
@@ -71,13 +74,13 @@ Workers send progress through:
 {
   "lease_id": "opaque-value",
   "generation": 2,
-  "progress_percent": 42,
-  "stage_label": "Transcribing",
-  "stage_detail": "168 / 401 seconds"
+  "progress_percent": 96,
+  "stage_label": "Speaker diarization",
+  "stage_detail": "Detecting speaker turns."
 }
 ```
 
-The production runtime reports heartbeat independently of segment production. A slow model load or slow transcription can therefore keep the lease alive even while the visible progress percentage is unchanged. An accepted update refreshes the lease and the shared Whisper runtime heartbeat used by web/mobile polling.
+The production runtime reports heartbeat independently of transcript production and diarization progress. Slow Whisper or pyannote model loading can therefore keep the lease alive even while visible progress is unchanged. An accepted update refreshes the lease and the shared Whisper runtime heartbeat used by web/mobile polling.
 
 ## Completion
 
@@ -91,17 +94,37 @@ Workers submit completed transcripts through:
   "generation": 2,
   "transcript_text": "Example transcript",
   "segments": [
-    {"start": 0.0, "end": 1.2, "text": "Example transcript"}
+    {
+      "start": 0.0,
+      "end": 1.2,
+      "text": "Example transcript",
+      "speaker_label": "SPEAKER_00"
+    }
   ],
   "runtime": {
     "engine": "faster-whisper",
     "device": "cpu",
     "compute_type": "int8"
+  },
+  "diarization": {
+    "requested": true,
+    "status": "completed",
+    "provider": "pyannote",
+    "model": "pyannote/speaker-diarization-community-1",
+    "speaker_count": 1,
+    "speaker_labels": ["SPEAKER_00"],
+    "speaker_turns": [
+      {"start": 0.0, "end": 1.2, "speaker": "SPEAKER_00"}
+    ],
+    "labelled_segment_count": 1,
+    "hf_token_present": true
   }
 }
 ```
 
-ToolsAPI persists the result before acknowledging it. The exact same terminal submission may be retried after a lost acknowledgement and returns `duplicate=true`. A conflicting terminal payload for the same lease generation is rejected with HTTP `409`.
+The `diarization` object is safe metadata only. It must never include a Hugging Face token value. `hf_token_present` is a boolean diagnostic and may be submitted. When diarization fails, the worker still submits the completed transcript with a `failed` or `unavailable` diarization status plus a safe error code/message.
+
+ToolsAPI persists the transcript and normalized diarization result before acknowledging it. Version 2 worker results must not cause a second local diarization pass. The exact same terminal submission may be retried after a lost acknowledgement and returns `duplicate=true`. A conflicting terminal payload for the same lease generation is rejected with HTTP `409`.
 
 ## Failure
 
@@ -119,6 +142,8 @@ Structured failures use:
 }
 ```
 
+This endpoint is for failures that prevent a usable transcript. Diarization-only failures belong in the successful completion payload so the transcript remains available.
+
 Retryable failures return the job to the ToolsAPI queue while attempts remain. Exact duplicate failure submissions are idempotent.
 
 ## Worker ownership rule
@@ -129,8 +154,10 @@ Temporary job media is isolated in a per-job directory and removed only when pro
 
 ## Runtime dependency
 
-Linux CPU/CUDA production installation uses the `whisper` package extra with `faster-whisper>=1.2.1,<2`. Apple Silicon macOS production installation uses the `whisper-mlx` package extra with `mlx-whisper>=0.4.3,<0.5`. Both modules are imported lazily by their execution handlers so protocol-only unit tests do not require model runtime loading.
+Linux and Windows CPU/CUDA production installation uses the `whisper` package extra with `faster-whisper>=1.2.1,<2`, `pyannote.audio>=4,<5` and PyTorch. Apple Silicon macOS production installation uses the `whisper-mlx` package extra with `mlx-whisper>=0.4.3,<0.5`, `pyannote.audio>=4,<5` and PyTorch.
+
+Python 3.10 or newer is required on every supported platform. Windows background installation is PowerShell-based and does not require an interactive `cmd.exe` runtime. Both Whisper and pyannote modules are imported lazily so protocol-only deterministic tests do not require model loading or live Hugging Face access.
 
 ## Compatibility
 
-Breaking changes require a new contract version. Existing versions remain supported until deliberately retired. Cross-repository contract fixtures should be shared as versioned JSON examples or a small dedicated schema package, not by importing ToolsAPI application code.
+Contract version 2 adds explicit diarization capability and structured diarization completion data. Version 1 workers must not claim version 2 jobs. Existing API route paths remain unchanged and unversioned.
