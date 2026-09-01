@@ -1,8 +1,10 @@
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from toolsapi_worker.config import WorkerConfig
+from toolsapi_worker.config import WorkerConfig, read_env_file
 
 
 class WorkerConfigTest(unittest.TestCase):
@@ -37,6 +39,42 @@ class WorkerConfigTest(unittest.TestCase):
         self.assertEqual("int8", config.whisper_compute_type)
         self.assertFalse(config.accepts_url_sources)
         self.assertEqual("/tmp/toolsapi-worker-test", config.temp_root)
+
+    def test_env_file_is_parsed_without_shell_evaluation(self):
+        with tempfile.TemporaryDirectory() as root:
+            env_file = Path(root) / ".env"
+            env_file.write_text(
+                "# Worker config\n"
+                "TOOLS_API_BASE_URL=https://tools.example.test\n"
+                "TOOLS_WORKER_TOKEN=12|token$with;separators\n"
+                "TOOLS_WORKER_ID='mac worker'\n"
+                "TOOLS_WORKER_WHISPER_DEVICE=metal\n"
+                "TOOLS_WORKER_WHISPER_MODELS=large-v3,turbo\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                config = WorkerConfig.from_env_file(env_file)
+
+        self.assertEqual("12|token$with;separators", config.worker_token)
+        self.assertEqual("mac worker", config.worker_id)
+        self.assertEqual("metal", config.whisper_device)
+        self.assertEqual(("large-v3", "turbo"), config.whisper_models)
+
+    def test_process_environment_overrides_env_file(self):
+        with tempfile.TemporaryDirectory() as root:
+            env_file = Path(root) / ".env"
+            env_file.write_text("TOOLS_WORKER_ID=file-worker\n", encoding="utf-8")
+            with patch.dict(os.environ, {"TOOLS_WORKER_ID": "process-worker"}, clear=True):
+                config = WorkerConfig.from_env_file(env_file)
+
+        self.assertEqual("process-worker", config.worker_id)
+
+    def test_invalid_env_file_entry_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            env_file = Path(root) / ".env"
+            env_file.write_text("not valid shell text\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                read_env_file(env_file)
 
     def test_missing_protocol_configuration_is_rejected_without_echoing_secrets(self):
         with patch.dict(os.environ, {}, clear=True):

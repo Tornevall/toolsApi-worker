@@ -32,8 +32,9 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 
 ## Whisper runtime
 
-- Production installation uses the `whisper` package extra and `faster-whisper` as the current execution engine.
-- CPU and CUDA are configuration choices; do not hardcode one device into the contract.
+- Linux/CPU/CUDA production installation uses the `whisper` package extra and `faster-whisper`.
+- Apple Silicon macOS production installation uses the `whisper-mlx` package extra and `mlx-whisper`; select it through the advertised Metal/MLX device capability.
+- CPU, CUDA and Apple Silicon Metal/MLX are configuration choices; do not hardcode one device into the contract.
 - Supported models are explicit runtime configuration and are advertised on every claim.
 - Temporary inputs must live in a per-job directory and be removed only after the ownership lifecycle ends through acknowledged terminal state or lease loss.
 - Never dynamically install models, Python packages or arbitrary code based on job payloads.
@@ -42,7 +43,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 
 - `.env.example` is the committed configuration template.
 - A real host `.env` must be created during installation when missing.
-- The canonical production runtime configuration lives in the installed project directory at `/opt/toolsapi-worker/.env` by default, or `${PREFIX}/.env` when a custom prefix is used.
+- The canonical production runtime configuration lives in the installed project directory at `/opt/toolsapi-worker/.env` by default on Ubuntu, `${HOME}/.local/toolsapi-worker/.env` by default on macOS, or `${PREFIX}/.env` when a custom prefix is used.
 - Do not move the worker runtime `.env` into `/etc` or another external configuration directory.
 - Install, reinstall and deploy must preserve an existing runtime `.env` and its values.
 - Uninstall preserves the project `.env` by default unless explicit configuration removal is requested.

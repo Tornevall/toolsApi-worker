@@ -20,6 +20,8 @@ ToolsAPI must leave incompatible jobs queued rather than mutating them. The curr
 
 A successful claim response must include `claim_policy_version >= 1`. Workers enabling live polling refuse claims from older ToolsAPI deployments that do not advertise this capability gate. This protects deployment order: the worker cannot start consuming jobs against an older server that would ignore its supported models or source restrictions.
 
+The `device` and `compute_type` values also describe the installed execution backend. CPU/CUDA values select `faster-whisper`; Apple Silicon workers advertise a Metal/MLX device value and use `mlx-whisper`. This does not change the worker contract or ownership semantics.
+
 ## Whisper claim
 
 Workers authenticate with a dedicated bearer credential and stable worker id, then call:
@@ -75,7 +77,7 @@ Workers send progress through:
 }
 ```
 
-The production runtime reports heartbeat independently of segment production. A slow model load or slow CPU transcription can therefore keep the lease alive even while the visible progress percentage is unchanged. An accepted update refreshes the lease and the shared Whisper runtime heartbeat used by web/mobile polling.
+The production runtime reports heartbeat independently of segment production. A slow model load or slow transcription can therefore keep the lease alive even while the visible progress percentage is unchanged. An accepted update refreshes the lease and the shared Whisper runtime heartbeat used by web/mobile polling.
 
 ## Completion
 
@@ -127,7 +129,7 @@ Temporary job media is isolated in a per-job directory and removed only when pro
 
 ## Runtime dependency
 
-Production system installation installs the `whisper` package extra, currently based on `faster-whisper>=1.2.1,<2`. The Python module is imported lazily by the execution handler so protocol-only unit tests do not require model runtime loading.
+Linux CPU/CUDA production installation uses the `whisper` package extra with `faster-whisper>=1.2.1,<2`. Apple Silicon macOS production installation uses the `whisper-mlx` package extra with `mlx-whisper>=0.4.3,<0.5`. Both modules are imported lazily by their execution handlers so protocol-only unit tests do not require model runtime loading.
 
 ## Compatibility
 

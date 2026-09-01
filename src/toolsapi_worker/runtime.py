@@ -183,12 +183,108 @@ class FasterWhisperHandler:
         )
 
 
+class MlxWhisperHandler:
+    MODEL_REPOSITORIES = {
+        "tiny": "mlx-community/whisper-tiny-mlx",
+        "base": "mlx-community/whisper-base-mlx",
+        "small": "mlx-community/whisper-small-mlx",
+        "medium": "mlx-community/whisper-medium-mlx",
+        "large": "mlx-community/whisper-large-mlx",
+        "large-v2": "mlx-community/whisper-large-v2-mlx",
+        "large-v3": "mlx-community/whisper-large-v3-mlx",
+        "turbo": "mlx-community/whisper-large-v3-turbo",
+    }
+
+    def __init__(
+        self,
+        config: WorkerConfig,
+        transcribe_func: Callable[..., dict[str, Any]] | None = None,
+    ) -> None:
+        self.config = config
+        self.transcribe_func = transcribe_func
+
+    def transcribe(
+        self,
+        claim: WhisperClaim,
+        input_path: Path,
+        heartbeat: LeaseHeartbeat,
+    ) -> WhisperResult:
+        if claim.model not in self.config.whisper_models:
+            raise RuntimeError(f"Unsupported Whisper model: {claim.model}")
+
+        model_repository = self.MODEL_REPOSITORIES.get(claim.model)
+        if model_repository is None:
+            raise RuntimeError(f"No MLX model mapping for Whisper model: {claim.model}")
+
+        heartbeat.update(15, "Loading Whisper model", f"Loading {claim.model} with MLX on Apple Silicon.")
+        heartbeat.assert_owned()
+        started = time.monotonic()
+        heartbeat.update(20, "Transcribing", "MLX Whisper transcription started.")
+
+        result = self._transcribe(
+            str(input_path),
+            path_or_hf_repo=model_repository,
+            language=claim.language or None,
+            verbose=False,
+        )
+        heartbeat.assert_owned()
+
+        raw_segments = result.get("segments") or []
+        segments: list[dict[str, Any]] = []
+        for segment in raw_segments:
+            if not isinstance(segment, dict):
+                continue
+            text = str(segment.get("text") or "").strip()
+            start = float(segment.get("start") or 0.0)
+            end = float(segment.get("end") or 0.0)
+            if text and end > start:
+                segments.append({"start": round(start, 3), "end": round(end, 3), "text": text})
+
+        transcript_text = str(result.get("text") or "").strip()
+        if not transcript_text:
+            transcript_text = " ".join(segment["text"] for segment in segments).strip()
+        if not transcript_text:
+            raise RuntimeError("Whisper returned an empty transcript")
+
+        duration = max((float(segment["end"]) for segment in segments), default=0.0)
+        processing_seconds = round(time.monotonic() - started, 3)
+        heartbeat.update(97, "Finalizing", "Submitting MLX Whisper transcript to ToolsAPI.")
+
+        return WhisperResult(
+            transcript_text=transcript_text,
+            segments=segments,
+            runtime={
+                "engine": "mlx-whisper",
+                "device": self.config.whisper_device,
+                "compute_type": self.config.whisper_compute_type,
+                "model": claim.model,
+                "model_repository": model_repository,
+                "duration_seconds": round(duration, 3) if duration > 0 else None,
+                "processing_seconds": processing_seconds,
+            },
+        )
+
+    def _transcribe(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if self.transcribe_func is not None:
+            return self.transcribe_func(*args, **kwargs)
+
+        import mlx_whisper
+
+        return mlx_whisper.transcribe(*args, **kwargs)
+
+
+def build_whisper_handler(config: WorkerConfig) -> FasterWhisperHandler | MlxWhisperHandler:
+    if config.whisper_device in {"metal", "mlx", "mps"}:
+        return MlxWhisperHandler(config)
+    return FasterWhisperHandler(config)
+
+
 class WorkerRuntime:
     def __init__(
         self,
         config: WorkerConfig,
         client: ToolsApiClient | None = None,
-        handler: FasterWhisperHandler | None = None,
+        handler: Any | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.config = config
@@ -197,7 +293,7 @@ class WorkerRuntime:
             config.worker_token,
             config.worker_id,
         )
-        self.handler = handler or FasterWhisperHandler(config)
+        self.handler = handler or build_whisper_handler(config)
         self.sleep = sleep
 
     def run_forever(self) -> None:

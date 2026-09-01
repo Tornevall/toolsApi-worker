@@ -20,14 +20,14 @@ See [docs/architecture.md](docs/architecture.md) and [docs/contracts.md](docs/co
 
 ## Whisper runtime
 
-`whisper.transcribe` now has an executable serial worker lifecycle:
+`whisper.transcribe` has an executable serial worker lifecycle:
 
 1. Advertise supported contract/model/device capability to ToolsAPI.
 2. Claim one compatible job and receive lease id + generation.
 3. Download lease-bound Tools-hosted media into a per-job temporary directory.
-4. Run `faster-whisper` with the configured model/device/compute type.
-5. Report heartbeat independently from transcript segment production so a slow CPU/model load remains visibly alive.
-6. Report visible progress as segments are produced.
+4. Run the configured Whisper backend.
+5. Report heartbeat independently from transcript production so a slow model load remains visibly alive.
+6. Report visible progress where the selected backend exposes it.
 7. Submit the transcript, segments and safe runtime metadata.
 8. Retry the exact same terminal submission after transient API failures until ToolsAPI acknowledges it or rejects the lease.
 9. Remove local temporary media after the ownership lifecycle ends.
@@ -36,13 +36,104 @@ The initial executable runtime is deliberately serial (`TOOLS_WORKER_CONCURRENCY
 
 Live polling also requires ToolsAPI to advertise `claim_policy_version >= 1`. If an older ToolsAPI deployment does not support capability-gated claims, the worker refuses to consume jobs. This makes deploy order safe.
 
+### Whisper backends
+
+Linux CPU/CUDA workers use `faster-whisper` through the `whisper` package extra.
+
+Apple Silicon macOS workers use `mlx-whisper` through the `whisper-mlx` package extra. The macOS installer configures `TOOLS_WORKER_WHISPER_DEVICE=metal`, which selects the MLX runtime and allows Whisper inference to use Apple Silicon acceleration. MLX model names are mapped to the corresponding `mlx-community` Whisper repositories.
+
 ### Initial input scope
 
 `TOOLS_WORKER_ACCEPTS_URL_SOURCES=false` is the default and recommended initial setting. Live remote execution is therefore limited to Tools-hosted upload/staged media. URL-source jobs stay on the local ToolsAPI runner until remote URL fetching is explicitly hardened and enabled. URL jobs that require speaker diarization remain local as well.
 
+## Local installation
+
+`make install` always installs into a project-local `.venv`. It does not modify system Python and therefore works with PEP 668-managed Homebrew Python installations.
+
+```bash
+git clone https://github.com/Tornevall/toolsApi-worker.git
+cd toolsApi-worker
+make install
+make status
+```
+
+On Apple Silicon macOS, `make install` installs the MLX Whisper extra. On other platforms it installs the `faster-whisper` extra.
+
+Run the local worker with:
+
+```bash
+make run
+```
+
+## macOS Apple Silicon installation
+
+Requirements:
+
+- Apple Silicon Mac (`arm64`)
+- Python 3.10 or newer
+- `ffmpeg`
+
+Install `ffmpeg` with Homebrew if needed:
+
+```bash
+brew install ffmpeg
+```
+
+Install the worker as a per-user launchd service:
+
+```bash
+make install-system
+```
+
+The default installed prefix is:
+
+```text
+~/.local/toolsapi-worker
+```
+
+The canonical host configuration is:
+
+```text
+~/.local/toolsapi-worker/.env
+```
+
+On first install the macOS installer defaults Whisper to:
+
+```text
+TOOLS_WORKER_ID=macos-apple-silicon
+TOOLS_WORKER_WHISPER_MODELS=large-v3,turbo
+TOOLS_WORKER_WHISPER_DEVICE=metal
+TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16
+```
+
+Set the real ToolsAPI URL, dedicated worker token and a stable unique worker id in that `.env`, then rerun:
+
+```bash
+make install-system
+```
+
+Reinstall preserves the existing `.env`. The service uses `~/Library/LaunchAgents/net.tornevall.toolsapi-worker.plist` and logs to:
+
+```text
+~/Library/Logs/toolsapi-worker.log
+~/Library/Logs/toolsapi-worker.error.log
+```
+
+Uninstall the runtime and launchd service while preserving `.env`:
+
+```bash
+make uninstall
+```
+
+Remove configuration as well only when explicitly intended:
+
+```bash
+REMOVE_CONFIG=true bash ./scripts/uninstall-macos.sh
+```
+
 ## Ubuntu installation
 
-Ubuntu is the primary host platform. The system installer installs the worker plus the `whisper` runtime extra (`faster-whisper>=1.2.1,<2`).
+Ubuntu remains the primary Linux host platform. The system installer installs the worker plus the `whisper` runtime extra (`faster-whisper>=1.2.1,<2`).
 
 ```bash
 git clone https://github.com/Tornevall/toolsApi-worker.git
@@ -61,7 +152,7 @@ sudo systemctl status toolsapi-worker
 
 ## Configuration
 
-The committed template is `.env.example`. The real host configuration remains inside the installed project at `/opt/toolsapi-worker/.env`.
+The committed template is `.env.example`. The real host configuration remains inside the installed project directory.
 
 Core settings:
 
@@ -80,7 +171,9 @@ TOOLS_WORKER_ACCEPTS_URL_SOURCES=false
 TOOLS_WORKER_TEMP_ROOT=/tmp/toolsapi-worker
 ```
 
-For a CUDA worker, set device/compute type according to the installed host runtime, for example `TOOLS_WORKER_WHISPER_DEVICE=cuda` and an appropriate `faster-whisper` compute type. The worker advertises these values to ToolsAPI but ToolsAPI remains the authority that decides whether a job is eligible.
+For a CUDA worker, set `TOOLS_WORKER_WHISPER_DEVICE=cuda` and a suitable `faster-whisper` compute type such as `float16`.
+
+For Apple Silicon, use `TOOLS_WORKER_WHISPER_DEVICE=metal` and `TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16`. The device value is advertised to ToolsAPI and also selects the MLX Whisper backend locally. ToolsAPI remains the authority that decides whether a job is eligible.
 
 ## Development and tests
 
@@ -90,9 +183,9 @@ make check
 make smoke-install
 ```
 
-Protocol/runtime unit tests do not require loading a real Whisper model. The system-install GitHub Actions jobs exercise the actual installer, including the production `whisper` dependency extra.
+Protocol/runtime unit tests do not require loading a real Whisper model. The Ubuntu system-install GitHub Actions jobs exercise the actual installer, including the production `whisper` dependency extra. CI also verifies that `make install` works on macOS without modifying managed system Python and validates the launchd template.
 
-CI runs on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus root/systemd install-reinstall-uninstall coverage.
+CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus Ubuntu root/systemd install-reinstall-uninstall coverage and macOS local-install coverage.
 
 ## Deployment
 
@@ -123,3 +216,4 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 - `Tornevall/toolsApi#469` - Remote Whisper worker support
 - `Tornevall/toolsApi#710` - Capability/post-processing claim gate
 - `Tornevall/toolsApi-worker#5` - Executable Whisper runtime
+- `Tornevall/toolsApi-worker#8` - macOS and Apple Silicon MLX worker support

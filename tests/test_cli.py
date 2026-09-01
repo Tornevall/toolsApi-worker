@@ -1,6 +1,8 @@
 import io
+import tempfile
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 from toolsapi_worker.cli import main
@@ -15,6 +17,26 @@ class CliTests(unittest.TestCase):
         self.assertIn("installed, credentials pending", output.getvalue())
         self.assertIn("device=cpu", output.getvalue())
         self.assertIn("models=small", output.getvalue())
+
+    def test_status_loads_env_file_without_shell_evaluation(self):
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as root:
+            env_file = Path(root) / ".env"
+            env_file.write_text(
+                "TOOLS_API_BASE_URL=https://tools.example.test\n"
+                "TOOLS_WORKER_TOKEN=12|token$with;separators\n"
+                "TOOLS_WORKER_ID=mac-worker\n"
+                "TOOLS_WORKER_WHISPER_DEVICE=metal\n"
+                "TOOLS_WORKER_WHISPER_MODELS=large-v3,turbo\n",
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {}, clear=True), redirect_stdout(output):
+                code = main(["status", "--env-file", str(env_file)])
+
+        self.assertEqual(code, 0)
+        self.assertIn("configured", output.getvalue())
+        self.assertIn("device=metal", output.getvalue())
+        self.assertIn("models=large-v3,turbo", output.getvalue())
 
     def test_no_command_prints_help(self):
         output = io.StringIO()
