@@ -124,6 +124,46 @@ class WorkerDiarizationTest(unittest.TestCase):
         with patch("toolsapi_worker.diarization.importlib.util.find_spec", return_value=None):
             self.assertFalse(diarizer.supported)
 
+    def test_cuda_capability_is_not_advertised_when_pytorch_cuda_is_unavailable(self):
+        diarizer = PyannoteDiarizer(
+            self.config(TOOLS_WORKER_DIARIZATION_DEVICE="cuda"),
+            pipeline_factory=lambda _source, token=None: _Pipeline(),
+            torch_module=_Torch(cuda_available=False),
+        )
+
+        self.assertFalse(diarizer.supported)
+
+    def test_cuda_capability_is_advertised_when_pytorch_cuda_is_available(self):
+        diarizer = PyannoteDiarizer(
+            self.config(TOOLS_WORKER_DIARIZATION_DEVICE="cuda"),
+            pipeline_factory=lambda _source, token=None: _Pipeline(),
+            torch_module=_Torch(cuda_available=True),
+        )
+
+        self.assertTrue(diarizer.supported)
+
+    def test_unavailable_explicit_device_is_reported_before_pipeline_loading(self):
+        called = False
+
+        def pipeline(_source, token=None):
+            nonlocal called
+            called = True
+            return _Pipeline()
+
+        diarizer = PyannoteDiarizer(
+            self.config(TOOLS_WORKER_DIARIZATION_DEVICE="cuda"),
+            pipeline_factory=pipeline,
+            torch_module=_Torch(cuda_available=False),
+        )
+        heartbeat = _Heartbeat()
+        segments = [{"start": 0.0, "end": 1.0, "text": "Bevaras"}]
+        mapped, result = diarizer.diarize(self.claim(), Path("unused.wav"), segments, heartbeat)
+
+        self.assertFalse(called)
+        self.assertEqual(segments, mapped)
+        self.assertEqual("unavailable", result["status"])
+        self.assertEqual("device_unavailable", result["error_code"])
+
     def test_auto_device_prefers_cuda(self):
         pipeline = _Pipeline()
         diarizer = PyannoteDiarizer(
