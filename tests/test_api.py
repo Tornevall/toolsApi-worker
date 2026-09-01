@@ -47,7 +47,7 @@ class ToolsApiClientTest(unittest.TestCase):
             "worker-mobile-slow",
         )
 
-    def claim(self, input_descriptor=None, diarization_requested=False):
+    def claim(self, input_descriptor=None, diarization_requested=False, operation="transcribe"):
         return WhisperClaim(
             job_id=123,
             lease_id="lease-abc",
@@ -55,6 +55,7 @@ class ToolsApiClientTest(unittest.TestCase):
             contract="whisper.transcribe",
             contract_version=2,
             lease_expires_at="2026-09-01T13:45:00+00:00",
+            operation=operation,
             model="small",
             language="sv",
             diarization_requested=diarization_requested,
@@ -77,12 +78,13 @@ class ToolsApiClientTest(unittest.TestCase):
                     "contract": "whisper.transcribe",
                     "contract_version": 2,
                     "lease_expires_at": "2026-09-01T13:45:00+00:00",
+                    "operation": "diarize",
                     "model": "small",
                     "language": "sv",
                     "diarization_requested": True,
                     "input": {
-                        "type": "url",
-                        "url": "https://media.example.test/audio.mp3",
+                        "type": "tools_media",
+                        "download_url": "https://tools.example.test/api/whisper/worker/jobs/123/media",
                     },
                 },
             }
@@ -99,6 +101,7 @@ class ToolsApiClientTest(unittest.TestCase):
         self.assertIsInstance(claim, WhisperClaim)
         self.assertEqual(123, claim.job_id)
         self.assertEqual(2, claim.generation)
+        self.assertEqual("diarize", claim.operation)
         self.assertTrue(claim.diarization_requested)
         request = urlopen.call_args.args[0]
         self.assertEqual("Bearer worker-secret", request.get_header("Authorization"))
@@ -167,10 +170,30 @@ class ToolsApiClientTest(unittest.TestCase):
 
         self.assertEqual(47, response["progress_percent"])
         request = urlopen.call_args.args[0]
+        self.assertTrue(request.full_url.endswith("/api/whisper/worker/jobs/123/progress"))
         body = json.loads(request.data.decode("utf-8"))
         self.assertEqual("lease-abc", body["lease_id"])
         self.assertEqual(2, body["generation"])
         self.assertEqual(47, body["progress_percent"])
+
+    @patch("urllib.request.urlopen")
+    def test_diarization_progress_uses_dedicated_endpoint(self, urlopen):
+        urlopen.return_value = FakeResponse(
+            {
+                "ok": True,
+                "job": {
+                    "id": 123,
+                    "status": "completed",
+                    "diarization_status": "running",
+                },
+            }
+        )
+        claim = self.claim(diarization_requested=True, operation="diarize")
+
+        self.client.report_whisper_progress(claim, 65, "Speaker diarization", "Detecting speaker turns")
+
+        request = urlopen.call_args.args[0]
+        self.assertTrue(request.full_url.endswith("/api/whisper/worker/jobs/123/diarization/progress"))
 
     @patch("urllib.request.urlopen")
     def test_tools_media_download_uses_lease_headers_and_streams_to_disk(self, urlopen):
@@ -231,6 +254,40 @@ class ToolsApiClientTest(unittest.TestCase):
         self.assertTrue(failure_body["retryable"])
 
     @patch("urllib.request.urlopen")
+    def test_diarization_only_completion_never_sends_transcript_fields(self, urlopen):
+        urlopen.return_value = FakeResponse(
+            {"ok": True, "accepted": True, "duplicate": False, "job": {"id": 123, "status": "completed"}}
+        )
+        claim = self.claim(diarization_requested=True, operation="diarize")
+
+        response = self.client.complete_whisper_diarization(
+            claim,
+            {
+                "requested": True,
+                "status": "completed",
+                "provider": "pyannote",
+                "speaker_count": 1,
+                "speaker_turns": [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}],
+            },
+        )
+
+        self.assertTrue(response["accepted"])
+        request = urlopen.call_args.args[0]
+        self.assertTrue(request.full_url.endswith("/api/whisper/worker/jobs/123/diarization"))
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertNotIn("transcript_text", body)
+        self.assertNotIn("segments", body)
+        self.assertEqual("completed", body["diarization"]["status"])
+
+    def test_diarization_only_claim_cannot_use_transcript_terminal_methods(self):
+        claim = self.claim(diarization_requested=True, operation="diarize")
+
+        with self.assertRaises(ValueError):
+            self.client.complete_whisper(claim, "must not be sent")
+        with self.assertRaises(ValueError):
+            self.client.fail_whisper(claim, "worker_error", "must not fail transcript")
+
+    @patch("urllib.request.urlopen")
     def test_409_is_lease_loss(self, urlopen):
         urlopen.side_effect = urllib.error.HTTPError(
             "https://tools.example.test/api/whisper/worker/jobs/123/progress",
@@ -257,6 +314,28 @@ class ToolsApiClientTest(unittest.TestCase):
             self.client.claim_whisper()
 
         self.assertNotIn("worker-secret", str(caught.exception))
+
+    @patch("urllib.request.urlopen")
+    def test_unknown_operation_is_rejected(self, urlopen):
+        urlopen.return_value = FakeResponse(
+            {
+                "ok": True,
+                "claim_policy_version": 2,
+                "job": {
+                    "job_id": 123,
+                    "lease_id": "lease-abc",
+                    "generation": 2,
+                    "contract": "whisper.transcribe",
+                    "contract_version": 2,
+                    "lease_expires_at": "2026-09-01T13:45:00+00:00",
+                    "operation": "translate",
+                    "input": {"type": "tools_media", "download_url": "https://tools.example.test/media"},
+                },
+            }
+        )
+
+        with self.assertRaises(WorkerApiError):
+            self.client.claim_whisper()
 
     @patch("urllib.request.urlopen")
     def test_unknown_contract_or_input_is_rejected(self, urlopen):
