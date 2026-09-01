@@ -85,6 +85,8 @@ Install the worker as a per-user launchd service:
 make install-system
 ```
 
+The installer resolves the `ffmpeg` executable from the interactive installation environment and writes an explicit launchd `PATH` containing that directory plus the normal Apple Silicon/Homebrew and system locations. This matters because launchd does not inherit the interactive shell PATH and MLX Whisper launches the `ffmpeg` CLI by name.
+
 The default installed prefix is:
 
 ```text
@@ -161,7 +163,7 @@ TOOLS_API_BASE_URL=https://tools.example.test
 TOOLS_WORKER_TOKEN=
 TOOLS_WORKER_ID=worker-01
 TOOLS_WORKER_CONCURRENCY=1
-TOOLS_WORKER_POLL_SECONDS=5
+TOOLS_WORKER_POLL_SECONDS=60
 TOOLS_WORKER_HEARTBEAT_SECONDS=30
 TOOLS_WORKER_ENABLED_HANDLERS=whisper.transcribe
 TOOLS_WORKER_WHISPER_MODELS=small
@@ -170,6 +172,8 @@ TOOLS_WORKER_WHISPER_COMPUTE_TYPE=int8
 TOOLS_WORKER_ACCEPTS_URL_SOURCES=false
 TOOLS_WORKER_TEMP_ROOT=/tmp/toolsapi-worker
 ```
+
+`TOOLS_WORKER_POLL_SECONDS` is only the idle/no-job and transient claim retry interval. Active-job liveness is independent and uses `TOOLS_WORKER_HEARTBEAT_SECONDS`, so a 60-second idle poll does not weaken a running lease's normal 30-second heartbeat.
 
 For a CUDA worker, set `TOOLS_WORKER_WHISPER_DEVICE=cuda` and a suitable `faster-whisper` compute type such as `float16`.
 
@@ -183,7 +187,7 @@ make check
 make smoke-install
 ```
 
-Protocol/runtime unit tests do not require loading a real Whisper model. The Ubuntu system-install GitHub Actions jobs exercise the actual installer, including the production `whisper` dependency extra. CI also verifies that `make install` works on macOS without modifying managed system Python and validates the launchd template.
+Protocol/runtime unit tests do not require loading a real Whisper model. The Ubuntu system-install GitHub Actions jobs exercise the actual installer, including the production `whisper` dependency extra. CI also verifies that `make install` works on macOS without modifying managed system Python and validates that the generated launchd service receives the resolved ffmpeg directory in PATH.
 
 CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus Ubuntu root/systemd install-reinstall-uninstall coverage and macOS local-install coverage.
 
@@ -217,3 +221,4 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 - `Tornevall/toolsApi#710` - Capability/post-processing claim gate
 - `Tornevall/toolsApi-worker#5` - Executable Whisper runtime
 - `Tornevall/toolsApi-worker#8` - macOS and Apple Silicon MLX worker support
+- `Tornevall/toolsApi-worker#10` - macOS ffmpeg PATH and idle polling follow-up
