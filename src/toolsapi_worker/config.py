@@ -1,7 +1,35 @@
 from __future__ import annotations
 
 import os
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
+
+_ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def read_env_file(path: str | Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    env_path = Path(path).expanduser()
+    for line_number, raw_line in enumerate(env_path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if not separator or not _ENV_KEY.fullmatch(key):
+            raise ValueError(f"Invalid environment entry at {env_path}:{line_number}")
+
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[key] = value
+
+    return values
 
 
 @dataclass(frozen=True)
@@ -21,20 +49,33 @@ class WorkerConfig:
 
     @classmethod
     def from_environment(cls) -> "WorkerConfig":
-        concurrency = max(1, int(os.getenv("TOOLS_WORKER_CONCURRENCY", "1")))
-        poll_seconds = max(1.0, float(os.getenv("TOOLS_WORKER_POLL_SECONDS", "5")))
-        heartbeat_seconds = max(5.0, float(os.getenv("TOOLS_WORKER_HEARTBEAT_SECONDS", "30")))
+        return cls.from_mapping(os.environ)
+
+    @classmethod
+    def from_env_file(cls, path: str | Path) -> "WorkerConfig":
+        values = read_env_file(path)
+        values.update(os.environ)
+        return cls.from_mapping(values)
+
+    @classmethod
+    def from_mapping(cls, environment: Mapping[str, str]) -> "WorkerConfig":
+        def env(name: str, default: str = "") -> str:
+            return str(environment.get(name, default))
+
+        concurrency = max(1, int(env("TOOLS_WORKER_CONCURRENCY", "1")))
+        poll_seconds = max(1.0, float(env("TOOLS_WORKER_POLL_SECONDS", "5")))
+        heartbeat_seconds = max(5.0, float(env("TOOLS_WORKER_HEARTBEAT_SECONDS", "30")))
         handlers = tuple(
             handler.strip()
-            for handler in os.getenv("TOOLS_WORKER_ENABLED_HANDLERS", "whisper.transcribe").split(",")
+            for handler in env("TOOLS_WORKER_ENABLED_HANDLERS", "whisper.transcribe").split(",")
             if handler.strip()
         )
         models = tuple(
             model.strip().lower()
-            for model in os.getenv("TOOLS_WORKER_WHISPER_MODELS", "small").split(",")
+            for model in env("TOOLS_WORKER_WHISPER_MODELS", "small").split(",")
             if model.strip()
         )
-        accepts_url_sources = os.getenv("TOOLS_WORKER_ACCEPTS_URL_SOURCES", "false").strip().lower() in {
+        accepts_url_sources = env("TOOLS_WORKER_ACCEPTS_URL_SOURCES", "false").strip().lower() in {
             "1",
             "true",
             "yes",
@@ -42,18 +83,18 @@ class WorkerConfig:
         }
 
         return cls(
-            api_base_url=os.getenv("TOOLS_API_BASE_URL", "").strip(),
-            worker_token=os.getenv("TOOLS_WORKER_TOKEN", "").strip(),
-            worker_id=os.getenv("TOOLS_WORKER_ID", "").strip(),
+            api_base_url=env("TOOLS_API_BASE_URL").strip(),
+            worker_token=env("TOOLS_WORKER_TOKEN").strip(),
+            worker_id=env("TOOLS_WORKER_ID").strip(),
             concurrency=concurrency,
             poll_seconds=poll_seconds,
             heartbeat_seconds=heartbeat_seconds,
             enabled_handlers=handlers,
             whisper_models=models,
-            whisper_device=os.getenv("TOOLS_WORKER_WHISPER_DEVICE", "cpu").strip().lower() or "cpu",
-            whisper_compute_type=os.getenv("TOOLS_WORKER_WHISPER_COMPUTE_TYPE", "int8").strip() or "int8",
+            whisper_device=env("TOOLS_WORKER_WHISPER_DEVICE", "cpu").strip().lower() or "cpu",
+            whisper_compute_type=env("TOOLS_WORKER_WHISPER_COMPUTE_TYPE", "int8").strip() or "int8",
             accepts_url_sources=accepts_url_sources,
-            temp_root=os.getenv("TOOLS_WORKER_TEMP_ROOT", "/tmp/toolsapi-worker").strip() or "/tmp/toolsapi-worker",
+            temp_root=env("TOOLS_WORKER_TEMP_ROOT", "/tmp/toolsapi-worker").strip() or "/tmp/toolsapi-worker",
         )
 
     def validate_protocol_configuration(self) -> None:
