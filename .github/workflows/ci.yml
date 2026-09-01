@@ -34,6 +34,7 @@ jobs:
           test -s scripts/install-macos.sh
           test -s scripts/uninstall-macos.sh
           test -s scripts/install-windows.ps1
+          test -s scripts/windows-gpu-policy.ps1
           test -s scripts/uninstall-windows.ps1
           test -s scripts/smoke-install.sh
           test -s src/toolsapi_worker/windows_service.py
@@ -69,14 +70,21 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/install-windows.ps1), [ref]$null, [ref]$errors) | Out-Null
           if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error }
           $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/windows-gpu-policy.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error }
+          $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/uninstall-windows.ps1), [ref]$null, [ref]$errors) | Out-Null
           if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error }
           $install = Get-Content scripts/install-windows.ps1 -Raw
+          $policy = Get-Content scripts/windows-gpu-policy.ps1 -Raw
           if ($install -match 'ScheduledTask|New-ScheduledTask|Register-ScheduledTask') { throw 'Windows worker must run as a service, not Task Scheduler.' }
           if ($install -notmatch 'ToolsAPIWorker') { throw 'Windows service name is missing from installer.' }
           if ($install -notmatch 'nvidia-smi\.exe') { throw 'Native NVIDIA detection is missing from installer.' }
           if ($install -notmatch 'get_cuda_device_count') { throw 'CTranslate2 CUDA validation is missing from installer.' }
           if ($install -notmatch 'torch\.cuda\.is_available') { throw 'PyTorch CUDA validation is missing from installer.' }
+          if ($install -notmatch 'torch\.ones') { throw 'PyTorch CUDA kernel validation is missing from installer.' }
+          if ($policy -notmatch 'int8_float32') { throw 'Pascal-compatible CTranslate2 compute-type policy is missing.' }
+          if ($policy -notmatch 'download\.pytorch\.org/whl/cu126') { throw 'Legacy NVIDIA PyTorch CUDA 12.6 policy is missing.' }
 
   macos-install:
     runs-on: macos-14

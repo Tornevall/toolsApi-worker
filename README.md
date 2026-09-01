@@ -150,7 +150,7 @@ Requirements:
 - Python 3.10 or newer installed for Windows
 - `ffmpeg` in the Windows system `PATH` for pyannote audio handling
 - For NVIDIA GPU execution: a native Windows NVIDIA driver plus CUDA 12 cuBLAS and cuDNN 9 visible to the service process
-- A CUDA-enabled PyTorch build when pyannote should run on the NVIDIA GPU
+- A CUDA-enabled PyTorch build compatible with the actual NVIDIA architecture when pyannote should run on the GPU
 
 WSL is not used. The worker is installed directly on Windows so CUDA is exposed directly to faster-whisper/CTranslate2 and PyTorch/pyannote.
 
@@ -168,23 +168,23 @@ Configure:
 %ProgramData%\Tornevall\toolsapi-worker\.env
 ```
 
-On a fresh installation, if native `nvidia-smi.exe` is available, the installer selects:
+On a fresh installation with native NVIDIA available, the installer selects `cuda` for Whisper and diarization, then asks CTranslate2 which compute types are actually supported by that GPU. It prefers `float16`, then `int8_float16`, then `int8_float32`, then `float32`. This means newer Tensor Core GPUs normally remain on `float16`, while Pascal GPUs such as a GTX 1060 can use `int8_float32` instead of being rejected by a hard-coded fp16 assumption.
 
-```text
-TOOLS_WORKER_WHISPER_DEVICE=cuda
-TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16
-TOOLS_WORKER_DIARIZATION_DEVICE=cuda
-```
+Existing `.env` values remain authoritative. Reinstall never silently rewrites an explicit compute type. If the configured type is not in CTranslate2's reported CUDA capability set, installation fails with the reported supported types so the operator can change `.env` deliberately.
 
-The installer verifies both GPU paths before the service is installed. The faster-whisper probe requires CTranslate2 to see a CUDA device with the selected GPU compute type. The diarization probe requires `torch.cuda.is_available()` to be true. The Python worker repeats the configured accelerator preflight on every process start before its first claim, so an `.env`, driver, CUDA DLL or PyTorch change after installation fails closed instead of consuming incompatible jobs. An explicitly configured `cuda` device never silently falls back to CPU.
+The CUDA version printed by `nvidia-smi` is driver capability, not proof that the matching CUDA Toolkit/runtime is installed and not a requirement that every library use that CUDA major. Current CTranslate2/faster-whisper Windows GPU execution still requires CUDA 12 cuBLAS and cuDNN 9 DLLs visible to the service process. A newer NVIDIA driver can run the CUDA 12 worker runtime through NVIDIA driver backward compatibility.
 
-If the normal PyTorch dependency resolved to a CPU-only build, rerun the installer with the official CUDA wheel index appropriate for the host, for example:
+For pyannote, the installer also checks the GPU compute capability. Current PyTorch CUDA 13 wheels no longer cover Maxwell, Pascal or Volta, so those architectures automatically use the maintained CUDA 12.6 PyTorch wheel channel (`https://download.pytorch.org/whl/cu126`). Turing and newer GPUs keep the normal dependency unless an explicit index override is supplied. The installer upgrades `torch` and `torchaudio` together when a CUDA wheel channel is selected.
+
+The installer verifies both GPU paths before the service is installed. The faster-whisper probe requires CTranslate2 to see a CUDA device and validates the exact configured compute type. The diarization probe does more than check `torch.cuda.is_available()`: it executes and synchronizes a tiny CUDA tensor operation so a wheel that sees the driver but cannot execute kernels for the installed GPU architecture fails before the worker can claim work. The Python worker repeats its configured accelerator preflight on every process start before its first claim. An explicitly configured `cuda` device never silently falls back to CPU.
+
+To override PyTorch wheel selection explicitly, rerun the installer with an official PyTorch CUDA wheel index appropriate for the host:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -TorchIndexUrl "<official PyTorch CUDA index URL>"
 ```
 
-The installer deliberately does not hardcode a CUDA-specific PyTorch index because the supported CUDA wheel channel changes independently of this repository. Use the current official PyTorch CUDA index for the installed driver/toolchain.
+An explicit `-TorchIndexUrl` always wins over automatic architecture selection.
 
 To intentionally disable speaker diarization while keeping Whisper running:
 
@@ -256,7 +256,7 @@ TOOLS_WORKER_TEMP_ROOT=
 
 `TOOLS_WORKER_DIARIZATION_HF_TOKEN` is only used locally to acquire/access the pyannote model. The worker never submits its value to ToolsAPI. It may report only whether a token was present. `TOOLS_WORKER_DIARIZATION_MODEL_DIR` can point at an already available local Community-1 directory and avoids requiring the job payload to choose or install code.
 
-For a CUDA worker, set `TOOLS_WORKER_WHISPER_DEVICE=cuda` and a suitable `faster-whisper` compute type such as `float16`. Native Windows CUDA requires CUDA 12 cuBLAS and cuDNN 9 for current CTranslate2/faster-whisper releases. Explicit CUDA configuration is revalidated at worker startup before any claim is attempted.
+For a CUDA worker, set `TOOLS_WORKER_WHISPER_DEVICE=cuda` and a compute type supported by the actual CTranslate2 CUDA capability set. `float16` is appropriate for many newer GPUs; Pascal compute capability 6.1 uses `int8_float32` or `float32` instead. Native Windows CUDA requires CUDA 12 cuBLAS and cuDNN 9 for current CTranslate2/faster-whisper releases. Explicit CUDA configuration is revalidated at worker startup before any claim is attempted.
 
 For Apple Silicon, use `TOOLS_WORKER_WHISPER_DEVICE=metal` and `TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16`. The device value is advertised to ToolsAPI and selects the MLX Whisper backend locally. `TOOLS_WORKER_DIARIZATION_DEVICE=auto` prefers Apple MPS for pyannote when PyTorch reports it available and otherwise uses CPU. ToolsAPI remains the authority that decides whether a job is eligible.
 
@@ -270,7 +270,7 @@ make smoke-install
 
 Protocol/runtime unit tests do not require loading a real Whisper or pyannote model. Diarization tests use injected deterministic pipeline doubles and do not make live Hugging Face calls. The Ubuntu system-install GitHub Actions jobs exercise the production `whisper` dependency extra. CI also verifies that `make install` works on macOS without modifying managed system Python and validates that the generated launchd service receives the resolved ffmpeg directory in PATH.
 
-CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus Ubuntu root/systemd install-reinstall-uninstall coverage, macOS local/install coverage and Windows native protocol/runtime tests with PowerShell/service syntax validation. CI does not pretend to provide a physical NVIDIA GPU; native CUDA is validated by deterministic preflight tests in CI and by the installer plus every worker process start on actual GPU hosts.
+CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus Ubuntu root/systemd install-reinstall-uninstall coverage, macOS local/install coverage and Windows native protocol/runtime tests with PowerShell/service syntax validation. Windows CI executes the same GPU policy helper used by the installer with deterministic Pascal and modern capability fixtures. CI does not pretend to provide a physical NVIDIA GPU; native CUDA is validated by deterministic preflight tests in CI and by the installer plus every worker process start on actual GPU hosts.
 
 ## Deployment
 
@@ -305,3 +305,4 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 - `Tornevall/toolsApi-worker#8` - macOS and Apple Silicon MLX worker support
 - `Tornevall/toolsApi-worker#10` - macOS ffmpeg PATH and idle polling follow-up
 - `Tornevall/toolsApi-worker#13` - Cross-platform worker diarization
+- `Tornevall/toolsApi-worker#17` - Native Windows Pascal CUDA compatibility

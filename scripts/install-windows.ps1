@@ -10,6 +10,12 @@ $EnvFile = Join-Path $Prefix ".env"
 $VenvDir = Join-Path $Prefix ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $ServiceName = "ToolsAPIWorker"
+$GpuPolicyScript = Join-Path $SourceDir "scripts\windows-gpu-policy.ps1"
+
+if (-not (Test-Path $GpuPolicyScript)) {
+    throw "Windows GPU policy helper is missing: $GpuPolicyScript"
+}
+. $GpuPolicyScript
 
 $Principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -101,6 +107,12 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
 }
 
 $PythonCommand = Resolve-PythonCommand -Requested $Python
+$NativeNvidia = $null -ne (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue)
+$GpuComputeCapability = if ($NativeNvidia) { Get-NvidiaComputeCapability } else { "" }
+$EffectiveTorchIndexUrl = Resolve-PyTorchIndexUrl -RequestedIndexUrl $TorchIndexUrl -ComputeCapability $GpuComputeCapability
+$FreshConfig = -not (Test-Path $EnvFile)
+$ExistingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+
 New-Item -ItemType Directory -Path $Prefix -Force | Out-Null
 
 Invoke-ResolvedPython -Command $PythonCommand -Arguments @("-m", "venv", $VenvDir)
@@ -120,36 +132,77 @@ if ($LASTEXITCODE -ne 0) {
     throw "Could not install toolsapi-worker Whisper, diarization and Windows service dependencies."
 }
 
-if ($TorchIndexUrl) {
-    & $VenvPython -m pip install --upgrade --index-url $TorchIndexUrl torch
+if ($EffectiveTorchIndexUrl) {
+    & $VenvPython -m pip install --upgrade --index-url $EffectiveTorchIndexUrl torch torchaudio
     if ($LASTEXITCODE -ne 0) {
-        throw "Could not install the requested CUDA-enabled PyTorch build from the supplied index URL."
+        throw "Could not install the CUDA-enabled PyTorch/torchaudio build from $EffectiveTorchIndexUrl."
     }
 }
 
-$FreshConfig = -not (Test-Path $EnvFile)
 if ($FreshConfig) {
     Copy-Item (Join-Path $SourceDir ".env.example") $EnvFile
 }
 
-$NativeNvidia = $null -ne (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue)
 if ($FreshConfig -and $NativeNvidia) {
     Set-EnvValue -Name "TOOLS_WORKER_WHISPER_DEVICE" -Value "cuda"
-    Set-EnvValue -Name "TOOLS_WORKER_WHISPER_COMPUTE_TYPE" -Value "float16"
     Set-EnvValue -Name "TOOLS_WORKER_DIARIZATION_DEVICE" -Value "cuda"
 }
 
 $WhisperDevice = (Get-EnvValue -Name "TOOLS_WORKER_WHISPER_DEVICE").ToLowerInvariant()
+$WhisperComputeType = (Get-EnvValue -Name "TOOLS_WORKER_WHISPER_COMPUTE_TYPE").ToLowerInvariant()
 $DiarizationDevice = (Get-EnvValue -Name "TOOLS_WORKER_DIARIZATION_DEVICE").ToLowerInvariant()
 $DiarizationEnabled = Test-Truthy (Get-EnvValue -Name "TOOLS_WORKER_DIARIZATION_ENABLED")
+$ConfigBaseUrl = Get-EnvValue -Name "TOOLS_API_BASE_URL"
+$ConfigWorkerToken = Get-EnvValue -Name "TOOLS_WORKER_TOKEN"
+$CanRepairGeneratedCudaDefault = Test-CanRepairGeneratedCudaDefault `
+    -FreshConfig $FreshConfig `
+    -ServiceExists ($null -ne $ExistingService) `
+    -BaseUrl $ConfigBaseUrl `
+    -WorkerToken $ConfigWorkerToken `
+    -WhisperDevice $WhisperDevice `
+    -WhisperComputeType $WhisperComputeType
 
 if ($WhisperDevice -eq "cuda") {
     if (-not $NativeNvidia) {
         throw "TOOLS_WORKER_WHISPER_DEVICE=cuda requires a native Windows NVIDIA driver visible through nvidia-smi.exe. WSL is not used by this worker."
     }
-    & $VenvPython -c "import ctranslate2, sys; count=ctranslate2.get_cuda_device_count(); types=ctranslate2.get_supported_compute_types('cuda') if count else set(); raise SystemExit(0 if count > 0 and ('float16' in types or 'int8_float16' in types) else 3)"
+
+    $CudaProbeOutput = @(& $VenvPython -c "import ctranslate2,json; count=int(ctranslate2.get_cuda_device_count()); types=sorted(str(v).strip().lower() for v in ctranslate2.get_supported_compute_types('cuda')) if count else []; print(json.dumps({'count': count, 'types': types}))" 2>&1)
     if ($LASTEXITCODE -ne 0) {
-        throw "Native faster-whisper CUDA validation failed. Install CUDA 12 cuBLAS and cuDNN 9 for Windows and ensure their DLL directories are in the system PATH."
+        throw "Native faster-whisper CUDA runtime validation failed before compute-type validation. nvidia-smi only confirms the NVIDIA driver; current CTranslate2/faster-whisper requires CUDA 12 cuBLAS and cuDNN 9 DLLs visible to the Windows service process."
+    }
+
+    try {
+        $CudaProbe = ($CudaProbeOutput | Select-Object -Last 1) | ConvertFrom-Json
+    } catch {
+        throw "Native faster-whisper CUDA validation returned an unreadable capability result."
+    }
+
+    if ([int]$CudaProbe.count -lt 1) {
+        throw "CTranslate2 found no usable native CUDA device. nvidia-smi driver visibility alone is not sufficient; verify the CUDA 12 runtime and cuDNN 9 installation."
+    }
+
+    $SupportedComputeTypes = @(
+        $CudaProbe.types |
+            ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } |
+            Where-Object { $_ }
+    )
+
+    $RepairGeneratedCudaDefault = $CanRepairGeneratedCudaDefault -and ($SupportedComputeTypes -notcontains $WhisperComputeType)
+    if ($FreshConfig -or $RepairGeneratedCudaDefault) {
+        $SelectedComputeType = Select-CTranslate2ComputeType -SupportedTypes $SupportedComputeTypes
+        if (-not $SelectedComputeType) {
+            throw "CTranslate2 detected the NVIDIA GPU but reported no supported worker compute type. Reported types: $($SupportedComputeTypes -join ', ')."
+        }
+        Set-EnvValue -Name "TOOLS_WORKER_WHISPER_COMPUTE_TYPE" -Value $SelectedComputeType
+        $WhisperComputeType = $SelectedComputeType
+        if ($RepairGeneratedCudaDefault) {
+            Write-Host "Recovered stale installer-generated CUDA compute type from a previous incomplete installation: $SelectedComputeType"
+        }
+    }
+
+    if ($WhisperComputeType -notin @("", "auto", "default") -and $SupportedComputeTypes -notcontains $WhisperComputeType) {
+        throw "Configured TOOLS_WORKER_WHISPER_COMPUTE_TYPE=$WhisperComputeType is not supported by this NVIDIA GPU. CTranslate2 reports: $($SupportedComputeTypes -join ', '). Update $EnvFile explicitly; configured existing workers are never rewritten on reinstall."
     }
 }
 
@@ -157,13 +210,16 @@ if ($DiarizationEnabled -and $DiarizationDevice -eq "cuda") {
     if (-not $NativeNvidia) {
         throw "TOOLS_WORKER_DIARIZATION_DEVICE=cuda requires a native Windows NVIDIA driver. WSL is not used by this worker."
     }
-    & $VenvPython -c "import torch; raise SystemExit(0 if torch.cuda.is_available() else 3)"
+
+    & $VenvPython -c "import torch; assert torch.cuda.is_available(); x=torch.ones(1, device='cuda'); y=(x + 1).cpu(); assert float(y.item()) == 2.0; torch.cuda.synchronize()"
     if ($LASTEXITCODE -ne 0) {
-        throw "Native pyannote CUDA validation failed because this PyTorch build cannot use CUDA. Install a CUDA-enabled PyTorch build and rerun the installer."
+        if (Test-NvidiaNeedsCuda126PyTorch -ComputeCapability $GpuComputeCapability) {
+            throw "Native pyannote CUDA validation failed on NVIDIA compute capability $GpuComputeCapability. Maxwell/Pascal/Volta workers require the supported PyTorch CUDA 12.6 wheel channel; rerun with -TorchIndexUrl https://download.pytorch.org/whl/cu126 if the automatic selection was overridden."
+        }
+        throw "Native pyannote CUDA validation failed because this PyTorch build cannot execute a CUDA kernel on the detected GPU. Install a compatible official CUDA-enabled PyTorch build and rerun the installer."
     }
 }
 
-$ExistingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($ExistingService) {
     if ($ExistingService.Status -ne "Stopped") {
         Stop-Service -Name $ServiceName -Force
@@ -194,10 +250,16 @@ if ($Token -and $BaseUrl -and $BaseUrl -ne "https://tools.example.test") {
 
 Write-Host "Configuration: $EnvFile"
 Write-Host "Diarization is enabled by default and can be disabled with TOOLS_WORKER_DIARIZATION_ENABLED=false."
+if ($NativeNvidia -and $GpuComputeCapability) {
+    Write-Host "NVIDIA compute capability: $GpuComputeCapability"
+}
+if ($EffectiveTorchIndexUrl -and -not $TorchIndexUrl -and (Test-NvidiaNeedsCuda126PyTorch -ComputeCapability $GpuComputeCapability)) {
+    Write-Host "PyTorch compatibility: selected CUDA 12.6 wheel channel for Maxwell/Pascal/Volta."
+}
 if ($WhisperDevice -eq "cuda") {
-    Write-Host "Whisper GPU: native Windows CUDA validated."
+    Write-Host "Whisper GPU: native Windows CUDA validated with compute type $WhisperComputeType."
 }
 if ($DiarizationEnabled -and $DiarizationDevice -eq "cuda") {
-    Write-Host "Diarization GPU: native Windows PyTorch CUDA validated."
+    Write-Host "Diarization GPU: native Windows PyTorch CUDA kernel validated."
 }
 Write-Host "Set TOOLS_WORKER_DIARIZATION_HF_TOKEN in .env when Community-1 is not already available locally."

@@ -33,11 +33,16 @@ class _Pipeline:
 
 
 class _Availability:
-    def __init__(self, available):
+    def __init__(self, available, kernel_works=True):
         self.available = available
+        self.kernel_works = kernel_works
 
     def is_available(self):
         return self.available
+
+    def synchronize(self):
+        if not self.kernel_works:
+            raise RuntimeError("CUDA kernel is incompatible")
 
 
 class _Backends:
@@ -45,10 +50,37 @@ class _Backends:
         self.mps = _Availability(mps_available)
 
 
+class _Tensor:
+    def __init__(self, value, kernel_works=True):
+        self.value = float(value)
+        self.kernel_works = kernel_works
+
+    def __add__(self, value):
+        if not self.kernel_works:
+            raise RuntimeError("CUDA kernel is incompatible")
+        return _Tensor(self.value + float(value), kernel_works=True)
+
+    def cpu(self):
+        if not self.kernel_works:
+            raise RuntimeError("CUDA kernel is incompatible")
+        return self
+
+    def item(self):
+        return self.value
+
+
 class _Torch:
-    def __init__(self, cuda_available=False, mps_available=False):
-        self.cuda = _Availability(cuda_available)
+    def __init__(self, cuda_available=False, mps_available=False, cuda_kernel_works=True):
+        self.cuda = _Availability(cuda_available, kernel_works=cuda_kernel_works)
         self.backends = _Backends(mps_available)
+        self.cuda_kernel_works = cuda_kernel_works
+
+    def ones(self, count, device=None):
+        if count != 1 or device != "cuda":
+            raise AssertionError("unexpected CUDA probe")
+        if not self.cuda_kernel_works:
+            raise RuntimeError("CUDA kernel is incompatible")
+        return _Tensor(1.0, kernel_works=True)
 
     @staticmethod
     def device(name):
@@ -134,11 +166,20 @@ class WorkerDiarizationTest(unittest.TestCase):
 
         self.assertFalse(diarizer.supported)
 
-    def test_cuda_capability_is_advertised_when_pytorch_cuda_is_available(self):
+    def test_cuda_capability_is_not_advertised_when_driver_is_visible_but_kernel_fails(self):
         diarizer = PyannoteDiarizer(
             self.config(TOOLS_WORKER_DIARIZATION_DEVICE="cuda"),
             pipeline_factory=lambda _source, token=None: _Pipeline(),
-            torch_module=_Torch(cuda_available=True),
+            torch_module=_Torch(cuda_available=True, cuda_kernel_works=False),
+        )
+
+        self.assertFalse(diarizer.supported)
+
+    def test_cuda_capability_is_advertised_when_pytorch_cuda_kernel_executes(self):
+        diarizer = PyannoteDiarizer(
+            self.config(TOOLS_WORKER_DIARIZATION_DEVICE="cuda"),
+            pipeline_factory=lambda _source, token=None: _Pipeline(),
+            torch_module=_Torch(cuda_available=True, cuda_kernel_works=True),
         )
 
         self.assertTrue(diarizer.supported)
@@ -179,12 +220,12 @@ class WorkerDiarizationTest(unittest.TestCase):
         self.assertEqual("cuda", pipeline.device)
         self.assertEqual("cuda", diarizer._resolved_device())
 
-    def test_auto_device_uses_mps_when_cuda_is_unavailable(self):
+    def test_auto_device_uses_mps_when_cuda_kernel_is_unavailable(self):
         pipeline = _Pipeline()
         diarizer = PyannoteDiarizer(
             self.config(TOOLS_WORKER_DIARIZATION_DEVICE="auto"),
             pipeline_factory=lambda _source, token=None: pipeline,
-            torch_module=_Torch(cuda_available=False, mps_available=True),
+            torch_module=_Torch(cuda_available=True, mps_available=True, cuda_kernel_works=False),
         )
 
         diarizer._move_pipeline(pipeline)
