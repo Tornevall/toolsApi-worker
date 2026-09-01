@@ -31,14 +31,32 @@ jobs:
           test -s docs/architecture.md
           test -s docs/contracts.md
           test -s scripts/install.sh
+          test -s scripts/install-macos.sh
+          test -s scripts/uninstall-macos.sh
           test -s scripts/smoke-install.sh
           test -s packaging/systemd/toolsapi-worker.service
+          test -s packaging/launchd/net.tornevall.toolsapi-worker.plist
       - name: Install package
         run: python -m pip install .
       - name: Run checks
         run: make check
       - name: Smoke-test isolated install
         run: make smoke-install
+
+  macos-install:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Validate launchd template
+        run: plutil -lint packaging/launchd/net.tornevall.toolsapi-worker.plist
+      - name: Verify PEP 668-safe local install
+        run: make install
+      - name: Verify locally installed CLI
+        run: .venv/bin/toolsapi-worker status
 
   system-install:
     strategy:
