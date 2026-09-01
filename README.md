@@ -176,7 +176,7 @@ TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16
 TOOLS_WORKER_DIARIZATION_DEVICE=cuda
 ```
 
-It then verifies both GPU paths before the service is installed. The faster-whisper probe requires CTranslate2 to see a CUDA device with a GPU compute type. The diarization probe requires `torch.cuda.is_available()` to be true. An explicitly configured `cuda` device never silently falls back to CPU.
+The installer verifies both GPU paths before the service is installed. The faster-whisper probe requires CTranslate2 to see a CUDA device with the selected GPU compute type. The diarization probe requires `torch.cuda.is_available()` to be true. The Python worker repeats the configured accelerator preflight on every process start before its first claim, so an `.env`, driver, CUDA DLL or PyTorch change after installation fails closed instead of consuming incompatible jobs. An explicitly configured `cuda` device never silently falls back to CPU.
 
 If the normal PyTorch dependency resolved to a CPU-only build, rerun the installer with the official CUDA wheel index appropriate for the host, for example:
 
@@ -256,7 +256,7 @@ TOOLS_WORKER_TEMP_ROOT=
 
 `TOOLS_WORKER_DIARIZATION_HF_TOKEN` is only used locally to acquire/access the pyannote model. The worker never submits its value to ToolsAPI. It may report only whether a token was present. `TOOLS_WORKER_DIARIZATION_MODEL_DIR` can point at an already available local Community-1 directory and avoids requiring the job payload to choose or install code.
 
-For a CUDA worker, set `TOOLS_WORKER_WHISPER_DEVICE=cuda` and a suitable `faster-whisper` compute type such as `float16`. Native Windows CUDA requires CUDA 12 cuBLAS and cuDNN 9 for current CTranslate2/faster-whisper releases.
+For a CUDA worker, set `TOOLS_WORKER_WHISPER_DEVICE=cuda` and a suitable `faster-whisper` compute type such as `float16`. Native Windows CUDA requires CUDA 12 cuBLAS and cuDNN 9 for current CTranslate2/faster-whisper releases. Explicit CUDA configuration is revalidated at worker startup before any claim is attempted.
 
 For Apple Silicon, use `TOOLS_WORKER_WHISPER_DEVICE=metal` and `TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16`. The device value is advertised to ToolsAPI and selects the MLX Whisper backend locally. `TOOLS_WORKER_DIARIZATION_DEVICE=auto` prefers Apple MPS for pyannote when PyTorch reports it available and otherwise uses CPU. ToolsAPI remains the authority that decides whether a job is eligible.
 
@@ -270,7 +270,7 @@ make smoke-install
 
 Protocol/runtime unit tests do not require loading a real Whisper or pyannote model. Diarization tests use injected deterministic pipeline doubles and do not make live Hugging Face calls. The Ubuntu system-install GitHub Actions jobs exercise the production `whisper` dependency extra. CI also verifies that `make install` works on macOS without modifying managed system Python and validates that the generated launchd service receives the resolved ffmpeg directory in PATH.
 
-CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus Ubuntu root/systemd install-reinstall-uninstall coverage, macOS local/install coverage and Windows native protocol/runtime tests with PowerShell/service syntax validation. CI does not pretend to provide a physical NVIDIA GPU; native CUDA is validated by the Windows installer on actual GPU hosts before the service starts.
+CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus Ubuntu root/systemd install-reinstall-uninstall coverage, macOS local/install coverage and Windows native protocol/runtime tests with PowerShell/service syntax validation. CI does not pretend to provide a physical NVIDIA GPU; native CUDA is validated by deterministic preflight tests in CI and by the installer plus every worker process start on actual GPU hosts.
 
 ## Deployment
 
