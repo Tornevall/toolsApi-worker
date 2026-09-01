@@ -33,6 +33,7 @@ All notable changes to toolsApi-worker are documented here.
 - Terminal acknowledgement retry that keeps the worker slot occupied and retries the exact same payload after transient API failures.
 - Worker protocol handling that preserves lease id/generation and treats HTTP 409 as loss of ownership or terminal-payload conflict.
 - Regression coverage for protocol, runtime heartbeat, terminal retry, temp cleanup, diarization, GPU preference, configuration and installer behavior.
+- Deterministic regression coverage proving the lease heartbeat continues while diarization itself is blocked.
 - Documentation requirements and CI validation baseline.
 - Ubuntu installer, Makefile, systemd service, installer smoke tests and guarded deployment workflow.
 - Canonical runtime `.env` in the installed project directory at `/opt/toolsapi-worker/.env` on Ubuntu, `~/.local/toolsapi-worker/.env` on macOS and `%ProgramData%\Tornevall\toolsapi-worker\.env` on Windows.
@@ -42,9 +43,11 @@ All notable changes to toolsApi-worker are documented here.
 
 - `whisper.transcribe` is now contract version 2 and requires ToolsAPI `claim_policy_version >= 2`, preventing older workers/servers from silently consuming diarization-required jobs.
 - Speaker diarization is enabled by default in worker configuration, can be explicitly disabled with `TOOLS_WORKER_DIARIZATION_ENABLED=false`, and uses `pyannote/speaker-diarization-community-1`.
+- Diarization capability advertisement now verifies that the installed pyannote and PyTorch runtimes are available before the worker may claim diarization-required jobs.
 - Pyannote `auto` device selection prefers CUDA, then Apple MPS, then CPU.
 - Fresh Windows installs automatically select CUDA/fp16 for Whisper and CUDA for diarization when native `nvidia-smi.exe` is available; existing `.env` values remain authoritative.
 - Explicit Windows `cuda` configuration no longer permits silent CPU fallback. CTranslate2 must see a native CUDA device and PyTorch must report CUDA availability for enabled CUDA diarization.
+- Windows `.env` parsing accepts a UTF-8 BOM written by Windows PowerShell 5.1, so preserved configuration remains usable across reinstall and service startup.
 - `make install` now creates and installs into `.venv` instead of attempting to modify the system/Homebrew Python environment.
 - `make install-system` and `make uninstall` dispatch to systemd tooling on Linux and launchd tooling on macOS; Windows uses the dedicated elevated PowerShell service installer scripts.
 - Corrected `.env.example` so it documents the canonical runtime configuration paths for Ubuntu, macOS and the Windows service.
@@ -64,6 +67,7 @@ All notable changes to toolsApi-worker are documented here.
 - Workers do not execute arbitrary installation instructions supplied by jobs.
 - Runtime `.env` and credentials are never committed; `.env.example` is the repository template.
 - Hugging Face token values stay local to the worker and are never logged or submitted to ToolsAPI; only a boolean token-presence diagnostic may leave the worker.
+- Unclassified pyannote/provider exceptions are reduced to a generic safe error before heartbeat or completion reporting, so configured token values and raw provider text cannot leave the worker through fallback diagnostics.
 - macOS launchd and Windows service startup do not source `.env` as executable shell code; the worker parses configuration data directly so credential values are not executed by a shell.
 - Worker client error messages do not include the configured bearer credential.
 - Workers refuse live claims from ToolsAPI deployments that do not advertise the current diarization-aware capability policy.
