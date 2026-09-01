@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import inspect
 from pathlib import Path
 from typing import Any, Callable
@@ -21,7 +22,11 @@ class PyannoteDiarizer:
 
     @property
     def supported(self) -> bool:
-        return self.config.diarization_enabled and self.config.diarization_provider == "pyannote"
+        if not self.config.diarization_enabled or self.config.diarization_provider != "pyannote":
+            return False
+        if self.pipeline_factory is not None:
+            return True
+        return self._runtime_dependencies_available()
 
     def diarize(
         self,
@@ -39,12 +44,20 @@ class PyannoteDiarizer:
             }
 
         if not self.supported:
+            error_code = "disabled"
+            error_message = "Speaker diarization is disabled on this worker."
+            if self.config.diarization_enabled and self.config.diarization_provider != "pyannote":
+                error_code = "unsupported_provider"
+                error_message = "Speaker diarization provider is unsupported on this worker."
+            elif self.config.diarization_enabled:
+                error_code = "missing_dependency"
+                error_message = "Speaker diarization dependencies are missing on this worker."
             return segments, {
                 "requested": True,
                 "status": "unavailable",
                 "provider": self.config.diarization_provider,
-                "error_code": "disabled",
-                "error_message": "Speaker diarization is disabled on this worker.",
+                "error_code": error_code,
+                "error_message": error_message,
                 "hf_token_present": bool(self.config.diarization_hf_token),
             }
 
@@ -212,6 +225,16 @@ class PyannoteDiarizer:
             raise RuntimeError("Speaker diarization dependencies are missing on this worker.") from exc
         return torch
 
+    def _runtime_dependencies_available(self) -> bool:
+        return self._module_available("pyannote.audio") and self._module_available("torch")
+
+    @staticmethod
+    def _module_available(name: str) -> bool:
+        try:
+            return importlib.util.find_spec(name) is not None
+        except (ImportError, ModuleNotFoundError, ValueError):
+            return False
+
     @staticmethod
     def _map_speakers(
         segments: list[dict[str, Any]],
@@ -260,4 +283,4 @@ class PyannoteDiarizer:
         if "token" in lowered and not self.config.diarization_hf_token:
             return "missing_token", "Speaker diarization requires a Hugging Face token on this worker."
 
-        return "process_failed", text[:1000] or "Speaker diarization failed on this worker."
+        return "process_failed", "Speaker diarization failed on this worker."
