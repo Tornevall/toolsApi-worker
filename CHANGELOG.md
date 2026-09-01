@@ -18,7 +18,8 @@ All notable changes to toolsApi-worker are documented here.
 - Apple Silicon MLX Whisper runtime selected by Metal/MLX device capability.
 - Per-user macOS launchd installer and uninstaller with configuration preservation.
 - PEP 668-safe local installation through an isolated project virtual environment.
-- macOS CI coverage for local installation and launchd template validation.
+- Safe `--env-file` configuration loading for launchd and direct CLI execution without shell evaluation.
+- macOS CI coverage for local installation, launchd install/reinstall/uninstall and plist validation.
 - Independent heartbeat reporting while model loading/transcription is slow, so liveness does not depend on new transcript segments.
 - Capability-aware claim advertisement for supported models, device, compute type and URL-source support.
 - Per-job temporary media isolation and cleanup after acknowledged terminal state or lease loss.
@@ -49,5 +50,6 @@ All notable changes to toolsApi-worker are documented here.
 - Tools-hosted media URLs contain no bearer token or lease secret; lease ownership is supplied through headers.
 - Workers do not execute arbitrary installation instructions supplied by jobs.
 - Runtime `.env` and credentials are never committed; `.env.example` is the repository template.
+- macOS launchd does not source `.env` as shell code; the worker parses configuration data directly so credential values are not executed by a shell.
 - Worker client error messages do not include the configured bearer credential.
 - Workers refuse live claims from ToolsAPI deployments that do not advertise capability-gated assignment policy.
