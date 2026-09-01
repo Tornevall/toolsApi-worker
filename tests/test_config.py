@@ -88,6 +88,22 @@ class WorkerConfigTest(unittest.TestCase):
         self.assertEqual(("large-v3", "turbo"), config.whisper_models)
         self.assertTrue(config.diarization_enabled)
 
+    def test_env_file_accepts_windows_powershell_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as root:
+            env_file = Path(root) / ".env"
+            env_file.write_bytes(
+                b"\xef\xbb\xbf# Worker config\r\n"
+                b"TOOLS_API_BASE_URL=https://tools.example.test\r\n"
+                b"TOOLS_WORKER_TOKEN=worker-secret\r\n"
+                b"TOOLS_WORKER_ID=windows-worker\r\n"
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                config = WorkerConfig.from_env_file(env_file)
+
+        self.assertEqual("https://tools.example.test", config.api_base_url)
+        self.assertEqual("worker-secret", config.worker_token)
+        self.assertEqual("windows-worker", config.worker_id)
+
     def test_process_environment_overrides_env_file(self):
         with tempfile.TemporaryDirectory() as root:
             env_file = Path(root) / ".env"
