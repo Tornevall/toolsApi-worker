@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -86,6 +87,32 @@ class FakeDiarizer:
         }
 
 
+class BlockingDiarizer:
+    supported = True
+
+    def __init__(self):
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.calls = []
+
+    def diarize(self, claim, input_path, segments, heartbeat):
+        self.calls.append((claim.job_id, str(input_path), list(segments)))
+        heartbeat.update(96, "Speaker diarization", "Blocked synthetic diarization")
+        self.started.set()
+        if not self.release.wait(timeout=2.0):
+            raise RuntimeError("synthetic diarization release timed out")
+        heartbeat.assert_owned()
+        labelled = [dict(segment, speaker_label="SPEAKER_00") for segment in segments]
+        return labelled, {
+            "requested": True,
+            "status": "completed",
+            "provider": "pyannote",
+            "speaker_count": 1,
+            "speaker_turns": [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}],
+            "hf_token_present": True,
+        }
+
+
 class WorkerRuntimeTest(unittest.TestCase):
     def config(self, temp_root, heartbeat_seconds=0.05, device="cpu", compute_type="int8", models=("small",)):
         return WorkerConfig(
@@ -135,6 +162,40 @@ class WorkerRuntimeTest(unittest.TestCase):
 
         self.assertGreaterEqual(len(client.progress_calls), 2)
         self.assertTrue(all(call[1] == 40 for call in client.progress_calls))
+
+    def test_heartbeat_continues_while_diarization_is_blocked(self):
+        with tempfile.TemporaryDirectory() as root:
+            client = FakeClient()
+            diarizer = BlockingDiarizer()
+            runtime = WorkerRuntime(
+                self.config(root, heartbeat_seconds=0.05),
+                client=client,
+                handler=SlowHandler(delay=0.01),
+                diarizer=diarizer,
+                sleep=lambda seconds: None,
+            )
+            worker_thread = threading.Thread(target=runtime.process_claim, args=(self.claim(),), daemon=True)
+            worker_thread.start()
+
+            self.assertTrue(diarizer.started.wait(timeout=1.0))
+            try:
+                progress_before_wait = len(client.progress_calls)
+                time.sleep(0.16)
+                progress_after_wait = len(client.progress_calls)
+                speaker_updates = [
+                    call for call in client.progress_calls
+                    if call[2] == "Speaker diarization" and call[1] == 96
+                ]
+                self.assertGreaterEqual(progress_after_wait - progress_before_wait, 2)
+                self.assertGreaterEqual(len(speaker_updates), 3)
+            finally:
+                diarizer.release.set()
+                worker_thread.join(timeout=1.0)
+
+            self.assertFalse(worker_thread.is_alive())
+            self.assertEqual(1, len(diarizer.calls))
+            self.assertEqual(1, len(client.complete_calls))
+            self.assertEqual([], client.fail_calls)
 
     def test_completed_job_runs_diarization_before_terminal_ack_and_cleans_temp_media(self):
         with tempfile.TemporaryDirectory() as root:
