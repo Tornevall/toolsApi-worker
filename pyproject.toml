@@ -12,8 +12,19 @@ authors = [{name = "Tornevall Networks"}]
 dependencies = []
 
 [project.optional-dependencies]
-whisper = ["faster-whisper>=1.2.1,<2"]
-whisper-mlx = ["mlx-whisper>=0.4.3,<0.5"]
+whisper = [
+    "faster-whisper>=1.2.1,<2",
+    "pyannote.audio>=4,<5",
+    "torch>=2.2",
+]
+whisper-mlx = [
+    "mlx-whisper>=0.4.3,<0.5",
+    "pyannote.audio>=4,<5",
+    "torch>=2.2",
+]
+windows = [
+    "pywin32>=306; platform_system == 'Windows'",
+]
 
 [project.scripts]
 toolsapi-worker = "toolsapi_worker.cli:main"
