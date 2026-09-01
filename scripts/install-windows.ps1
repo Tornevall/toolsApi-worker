@@ -225,9 +225,9 @@ if ($ExistingService) {
         Stop-Service -Name $ServiceName -Force
         $ExistingService.WaitForStatus("Stopped", (New-TimeSpan -Seconds 30))
     }
-    & $VenvPython -m toolsapi_worker.windows_service update --startup auto
+    & $VenvPython -m toolsapi_worker.windows_service --startup auto update
 } else {
-    & $VenvPython -m toolsapi_worker.windows_service install --startup auto
+    & $VenvPython -m toolsapi_worker.windows_service --startup auto install
 }
 if ($LASTEXITCODE -ne 0) {
     throw "Could not install or update the ToolsAPI Worker Windows service."
