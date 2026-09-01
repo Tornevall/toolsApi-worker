@@ -19,22 +19,26 @@ SERVICE_DISPLAY_NAME = "Tornevall ToolsAPI Worker"
 SERVICE_DESCRIPTION = "Continuously polls ToolsAPI for delegated worker jobs."
 
 
-def configured_env_file() -> str:
+def configured_parameter(name: str) -> str:
     key_path = rf"SYSTEM\CurrentControlSet\Services\{SERVICE_NAME}\Parameters"
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
-            value, _ = winreg.QueryValueEx(key, "EnvFile")
+            value, _ = winreg.QueryValueEx(key, name)
     except OSError as exc:
-        raise RuntimeError("ToolsAPI Worker service is missing its EnvFile registry setting.") from exc
+        raise RuntimeError(f"ToolsAPI Worker service is missing its {name} registry setting.") from exc
 
-    env_file = str(value).strip()
-    if not env_file:
-        raise RuntimeError("ToolsAPI Worker service EnvFile registry setting is empty.")
-    return env_file
+    text = str(value).strip()
+    if not text:
+        raise RuntimeError(f"ToolsAPI Worker service {name} registry setting is empty.")
+    return text
 
 
-def venv_python() -> Path:
-    candidate = Path(sys.prefix) / "Scripts" / "python.exe"
+def configured_env_file() -> str:
+    return configured_parameter("EnvFile")
+
+
+def configured_python() -> Path:
+    candidate = Path(configured_parameter("PythonExe"))
     if not candidate.is_file():
         raise RuntimeError(f"Worker virtual-environment Python was not found at {candidate}.")
     return candidate
@@ -68,7 +72,7 @@ class ToolsApiWorkerService(win32serviceutil.ServiceFramework):
 
     def _run_worker_process(self) -> None:
         env_file = configured_env_file()
-        python = venv_python()
+        python = configured_python()
         command = [
             str(python),
             "-m",
