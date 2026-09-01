@@ -15,6 +15,10 @@ All notable changes to toolsApi-worker are documented here.
 - Lease-bound Tools-hosted media download support using dedicated worker auth plus lease/generation headers.
 - Idempotent Whisper completion and structured failure client calls using the same lease id and generation as the claim.
 - Executable serial `faster-whisper` runtime with CPU/CUDA device and compute-type configuration.
+- Apple Silicon MLX Whisper runtime selected by Metal/MLX device capability.
+- Per-user macOS launchd installer and uninstaller with configuration preservation.
+- PEP 668-safe local installation through an isolated project virtual environment.
+- macOS CI coverage for local installation and launchd template validation.
 - Independent heartbeat reporting while model loading/transcription is slow, so liveness does not depend on new transcript segments.
 - Capability-aware claim advertisement for supported models, device, compute type and URL-source support.
 - Per-job temporary media isolation and cleanup after acknowledged terminal state or lease loss.
@@ -28,8 +32,11 @@ All notable changes to toolsApi-worker are documented here.
 
 ### Changed
 
+- `make install` now creates and installs into `.venv` instead of attempting to modify the system/Homebrew Python environment.
+- `make install-system` and `make uninstall` dispatch to systemd tooling on Linux and launchd tooling on macOS.
 - Corrected `.env.example` so it no longer describes `/etc/toolsapi-worker/.env` as the canonical runtime configuration path.
-- Production system installation now installs the `whisper` runtime extra with `faster-whisper>=1.2.1,<2`.
+- Production Linux system installation installs the `whisper` runtime extra with `faster-whisper>=1.2.1,<2`.
+- Production Apple Silicon macOS installation installs the `whisper-mlx` runtime extra with `mlx-whisper` and defaults to `device=metal`, `compute_type=float16`, and `large-v3,turbo`.
 - `toolsapi-worker run` now executes the live serial polling lifecycle instead of returning the bootstrap placeholder error.
 - Live polling requires ToolsAPI `claim_policy_version >= 1`; older server deployments are rejected before any job is consumed.
 - URL-source execution remains disabled by default (`TOOLS_WORKER_ACCEPTS_URL_SOURCES=false`). Initial live execution is restricted to lease-bound Tools-hosted media.
