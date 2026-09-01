@@ -34,6 +34,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 
 - Linux/CPU/CUDA production installation uses the `whisper` package extra and `faster-whisper`.
 - Apple Silicon macOS production installation uses the `whisper-mlx` package extra and `mlx-whisper`; select it through the advertised Metal/MLX device capability.
+- macOS launchd workers must receive a runtime `PATH` that can resolve the ffmpeg executable validated by the installer. Do not assume launchd inherits Homebrew paths from an interactive shell.
 - CPU, CUDA and Apple Silicon Metal/MLX are configuration choices; do not hardcode one device into the contract.
 - Supported models are explicit runtime configuration and are advertised on every claim.
 - Temporary inputs must live in a per-job directory and be removed only after the ownership lifecycle ends through acknowledged terminal state or lease loss.
@@ -69,6 +70,7 @@ Tests should cover at minimum when relevant:
 - installer is idempotent
 - existing runtime `.env` survives reinstall/deploy
 - install and uninstall preserve configuration according to documented policy
+- macOS launchd installer output can resolve the same ffmpeg directory validated during installation
 
 ## Documentation
 
