@@ -1,6 +1,7 @@
 param(
     [string]$Prefix = "$env:ProgramData\Tornevall\toolsapi-worker",
-    [string]$Python = ""
+    [string]$Python = "",
+    [string]$TorchIndexUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,8 +54,50 @@ function Invoke-ResolvedPython {
     }
 }
 
+function Get-EnvValue {
+    param([string]$Name)
+
+    if (-not (Test-Path $EnvFile)) {
+        return ""
+    }
+    foreach ($Line in Get-Content $EnvFile) {
+        if ($Line -match "^$([regex]::Escape($Name))=(.*)$") {
+            return $Matches[1].Trim().Trim('"').Trim("'")
+        }
+    }
+    return ""
+}
+
+function Set-EnvValue {
+    param(
+        [string]$Name,
+        [string]$Value
+    )
+
+    $Lines = @(Get-Content $EnvFile)
+    $Pattern = "^$([regex]::Escape($Name))="
+    $Found = $false
+    $Updated = foreach ($Line in $Lines) {
+        if ($Line -match $Pattern) {
+            $Found = $true
+            "$Name=$Value"
+        } else {
+            $Line
+        }
+    }
+    if (-not $Found) {
+        $Updated += "$Name=$Value"
+    }
+    Set-Content -Path $EnvFile -Value $Updated -Encoding UTF8
+}
+
+function Test-Truthy {
+    param([string]$Value)
+    return $Value.Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")
+}
+
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    throw "ffmpeg is required for Whisper/pyannote audio processing. Install ffmpeg and ensure it is available in PATH."
+    throw "ffmpeg is required for pyannote audio processing. Install ffmpeg and ensure it is available in the system PATH."
 }
 
 $PythonCommand = Resolve-PythonCommand -Requested $Python
@@ -77,8 +120,47 @@ if ($LASTEXITCODE -ne 0) {
     throw "Could not install toolsapi-worker Whisper, diarization and Windows service dependencies."
 }
 
-if (-not (Test-Path $EnvFile)) {
+if ($TorchIndexUrl) {
+    & $VenvPython -m pip install --upgrade --index-url $TorchIndexUrl torch
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not install the requested CUDA-enabled PyTorch build from the supplied index URL."
+    }
+}
+
+$FreshConfig = -not (Test-Path $EnvFile)
+if ($FreshConfig) {
     Copy-Item (Join-Path $SourceDir ".env.example") $EnvFile
+}
+
+$NativeNvidia = $null -ne (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue)
+if ($FreshConfig -and $NativeNvidia) {
+    Set-EnvValue -Name "TOOLS_WORKER_WHISPER_DEVICE" -Value "cuda"
+    Set-EnvValue -Name "TOOLS_WORKER_WHISPER_COMPUTE_TYPE" -Value "float16"
+    Set-EnvValue -Name "TOOLS_WORKER_DIARIZATION_DEVICE" -Value "cuda"
+}
+
+$WhisperDevice = (Get-EnvValue -Name "TOOLS_WORKER_WHISPER_DEVICE").ToLowerInvariant()
+$DiarizationDevice = (Get-EnvValue -Name "TOOLS_WORKER_DIARIZATION_DEVICE").ToLowerInvariant()
+$DiarizationEnabled = Test-Truthy (Get-EnvValue -Name "TOOLS_WORKER_DIARIZATION_ENABLED")
+
+if ($WhisperDevice -eq "cuda") {
+    if (-not $NativeNvidia) {
+        throw "TOOLS_WORKER_WHISPER_DEVICE=cuda requires a native Windows NVIDIA driver visible through nvidia-smi.exe. WSL is not used by this worker."
+    }
+    & $VenvPython -c "import ctranslate2, sys; count=ctranslate2.get_cuda_device_count(); types=ctranslate2.get_supported_compute_types('cuda') if count else set(); raise SystemExit(0 if count > 0 and ('float16' in types or 'int8_float16' in types) else 3)"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native faster-whisper CUDA validation failed. Install CUDA 12 cuBLAS and cuDNN 9 for Windows and ensure their DLL directories are in the system PATH."
+    }
+}
+
+if ($DiarizationEnabled -and $DiarizationDevice -eq "cuda") {
+    if (-not $NativeNvidia) {
+        throw "TOOLS_WORKER_DIARIZATION_DEVICE=cuda requires a native Windows NVIDIA driver. WSL is not used by this worker."
+    }
+    & $VenvPython -c "import torch; raise SystemExit(0 if torch.cuda.is_available() else 3)"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native pyannote CUDA validation failed because this PyTorch build cannot use CUDA. Install a CUDA-enabled PyTorch build and rerun the installer."
+    }
 }
 
 $ExistingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
@@ -99,21 +181,22 @@ $ParametersKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName\Parameter
 New-Item -Path $ParametersKey -Force | Out-Null
 New-ItemProperty -Path $ParametersKey -Name "EnvFile" -PropertyType String -Value $EnvFile -Force | Out-Null
 
-$Token = ""
-$BaseUrl = ""
-foreach ($Line in Get-Content $EnvFile) {
-    if ($Line -match '^TOOLS_WORKER_TOKEN=(.*)$') { $Token = $Matches[1].Trim() }
-    if ($Line -match '^TOOLS_API_BASE_URL=(.*)$') { $BaseUrl = $Matches[1].Trim() }
-}
-
+$Token = Get-EnvValue -Name "TOOLS_WORKER_TOKEN"
+$BaseUrl = Get-EnvValue -Name "TOOLS_API_BASE_URL"
 if ($Token -and $BaseUrl -and $BaseUrl -ne "https://tools.example.test") {
     Start-Service -Name $ServiceName
-    Write-Host "Installed and started $ServiceName as a continuous polling service."
+    Write-Host "Installed and started $ServiceName as a continuous native Windows polling service."
 } else {
-    Write-Host "Installed $ServiceName as a continuous polling service, but it was not started because ToolsAPI credentials are not configured."
+    Write-Host "Installed $ServiceName as a continuous native Windows polling service, but it was not started because ToolsAPI credentials are not configured."
     Write-Host "Configure $EnvFile and then run: Start-Service $ServiceName"
 }
 
 Write-Host "Configuration: $EnvFile"
 Write-Host "Diarization is enabled by default and can be disabled with TOOLS_WORKER_DIARIZATION_ENABLED=false."
+if ($WhisperDevice -eq "cuda") {
+    Write-Host "Whisper GPU: native Windows CUDA validated."
+}
+if ($DiarizationEnabled -and $DiarizationDevice -eq "cuda") {
+    Write-Host "Diarization GPU: native Windows PyTorch CUDA validated."
+}
 Write-Host "Set TOOLS_WORKER_DIARIZATION_HF_TOKEN in .env when Community-1 is not already available locally."
