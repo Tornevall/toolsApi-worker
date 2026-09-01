@@ -40,6 +40,9 @@ class WhisperClaim:
 
 
 class ToolsApiClient:
+    CONTRACT_VERSION = 2
+    CLAIM_POLICY_VERSION = 2
+
     def __init__(
         self,
         base_url: str,
@@ -65,6 +68,7 @@ class ToolsApiClient:
         device: str = "cpu",
         compute_type: str = "int8",
         accepts_url_sources: bool = False,
+        supports_diarization: bool = True,
     ) -> WhisperClaim | None:
         advertised_models = [str(model).strip().lower() for model in models if str(model).strip()]
         if not advertised_models:
@@ -74,16 +78,17 @@ class ToolsApiClient:
             "POST",
             "/api/whisper/worker/claim",
             {
-                "contract_version": 1,
+                "contract_version": self.CONTRACT_VERSION,
                 "models": advertised_models,
                 "device": device,
                 "compute_type": compute_type,
                 "accepts_url_sources": bool(accepts_url_sources),
+                "supports_diarization": bool(supports_diarization),
             },
         )
-        if int(payload.get("claim_policy_version") or 0) < 1:
+        if int(payload.get("claim_policy_version") or 0) < self.CLAIM_POLICY_VERSION:
             raise WorkerApiError(
-                "ToolsAPI does not advertise the capability-gated Whisper claim policy; refusing live work"
+                "ToolsAPI does not advertise the current diarization-aware Whisper claim policy; refusing live work"
             )
 
         job = payload.get("job")
@@ -94,7 +99,7 @@ class ToolsApiClient:
 
         contract = str(job.get("contract") or job.get("handler") or "")
         contract_version = int(job.get("contract_version") or 0)
-        if contract != "whisper.transcribe" or contract_version != 1:
+        if contract != "whisper.transcribe" or contract_version != self.CONTRACT_VERSION:
             raise WorkerApiError(
                 f"Unsupported Whisper worker contract {contract!r} version {contract_version}"
             )
@@ -198,6 +203,7 @@ class ToolsApiClient:
         transcript_text: str,
         segments: list[dict[str, Any]] | None = None,
         runtime: dict[str, Any] | None = None,
+        diarization: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not transcript_text.strip():
             raise ValueError("transcript_text is required")
@@ -211,6 +217,7 @@ class ToolsApiClient:
                 "transcript_text": transcript_text,
                 "segments": list(segments or []),
                 "runtime": dict(runtime or {}),
+                "diarization": dict(diarization or {}),
             },
         )
         if payload.get("accepted") is not True:
