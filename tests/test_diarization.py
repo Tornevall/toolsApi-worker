@@ -20,8 +20,38 @@ class _Annotation:
 
 
 class _Pipeline:
+    def __init__(self):
+        self.device = None
+
     def __call__(self, _path, **_kwargs):
         return _Annotation()
+
+    def to(self, device):
+        self.device = str(device)
+        return self
+
+
+class _Availability:
+    def __init__(self, available):
+        self.available = available
+
+    def is_available(self):
+        return self.available
+
+
+class _Backends:
+    def __init__(self, mps_available=False):
+        self.mps = _Availability(mps_available)
+
+
+class _Torch:
+    def __init__(self, cuda_available=False, mps_available=False):
+        self.cuda = _Availability(cuda_available)
+        self.backends = _Backends(mps_available)
+
+    @staticmethod
+    def device(name):
+        return name
 
 
 class _Heartbeat:
@@ -86,6 +116,45 @@ class WorkerDiarizationTest(unittest.TestCase):
         self.assertEqual("SPEAKER_00", mapped[0]["speaker_label"])
         self.assertEqual("SPEAKER_01", mapped[1]["speaker_label"])
         self.assertTrue(any(label == "Speaker diarization" for _, label, _ in heartbeat.updates))
+
+    def test_auto_device_prefers_cuda(self):
+        pipeline = _Pipeline()
+        diarizer = PyannoteDiarizer(
+            self.config(TOOLS_WORKER_DIARIZATION_DEVICE="auto"),
+            pipeline_factory=lambda _source, token=None: pipeline,
+            torch_module=_Torch(cuda_available=True, mps_available=True),
+        )
+
+        moved = diarizer._move_pipeline(pipeline)
+
+        self.assertIs(pipeline, moved)
+        self.assertEqual("cuda", pipeline.device)
+        self.assertEqual("cuda", diarizer._resolved_device())
+
+    def test_auto_device_uses_mps_when_cuda_is_unavailable(self):
+        pipeline = _Pipeline()
+        diarizer = PyannoteDiarizer(
+            self.config(TOOLS_WORKER_DIARIZATION_DEVICE="auto"),
+            pipeline_factory=lambda _source, token=None: pipeline,
+            torch_module=_Torch(cuda_available=False, mps_available=True),
+        )
+
+        diarizer._move_pipeline(pipeline)
+
+        self.assertEqual("mps", pipeline.device)
+        self.assertEqual("mps", diarizer._resolved_device())
+
+    def test_explicit_cuda_does_not_fall_back_to_cpu(self):
+        diarizer = PyannoteDiarizer(
+            self.config(TOOLS_WORKER_DIARIZATION_DEVICE="cuda"),
+            pipeline_factory=lambda _source, token=None: _Pipeline(),
+            torch_module=_Torch(cuda_available=False),
+        )
+
+        with self.assertRaises(RuntimeError) as caught:
+            diarizer._move_pipeline(_Pipeline())
+
+        self.assertIn("CUDA", str(caught.exception))
 
     def test_diarization_failure_preserves_transcript_segments(self):
         def broken_pipeline(_source, token=None):
