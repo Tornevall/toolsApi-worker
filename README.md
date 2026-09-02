@@ -23,7 +23,7 @@ See [docs/architecture.md](docs/architecture.md) and [docs/contracts.md](docs/co
 `whisper.transcribe` contract version 2 has an executable serial worker lifecycle:
 
 1. Advertise supported contract/model/device capability plus whether the worker can run speaker diarization.
-2. Claim one compatible job and receive lease id + generation.
+2. Claim one automatically compatible job, or an authoritative administrator-forced exact-target job, and receive lease id + generation.
 3. Download lease-bound Tools-hosted media into a per-job temporary directory.
 4. Run the configured Whisper backend.
 5. Report heartbeat independently from transcript production so a slow model load remains visibly alive.
@@ -37,7 +37,7 @@ A diarization failure does not discard a successful transcript. The worker submi
 
 The initial executable runtime is deliberately serial (`TOOLS_WORKER_CONCURRENCY=1`). Parallel execution will be added only with dedicated ownership/lifecycle coverage.
 
-Live polling requires ToolsAPI to advertise `claim_policy_version >= 2`. If an older ToolsAPI deployment does not support the diarization-aware capability gate, the worker refuses to consume jobs. This makes deploy order safe.
+Live polling requires ToolsAPI to advertise `claim_policy_version >= 2`. If an older ToolsAPI deployment does not support the diarization-aware capability gate, the worker refuses to consume jobs. This makes deploy order safe. Capability advertisement controls normal automatic assignment, but a job actually returned by a supported current policy is authoritative. ToolsAPI may return an administrator-selected exact target across advertised model or diarization mismatches; the worker attempts the unchanged request and reports its normal retryable/terminal failure if the local runtime cannot execute it. Raw URL input is still only returned to workers that advertise URL support. For a URL-origin job targeting a worker without that support, ToolsAPI may download and verify the source itself and then return the staged binary through the normal lease-bound `tools_media` path.
 
 ### Whisper and diarization backends
 
