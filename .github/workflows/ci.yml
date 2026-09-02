@@ -63,6 +63,44 @@ jobs:
         run: |
           python -m py_compile src/toolsapi_worker/windows_service.py
           python -c "import toolsapi_worker.windows_service as service; assert service.SERVICE_NAME == 'ToolsAPIWorker'"
+      - name: Exercise native Windows service registration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $serviceName = 'ToolsAPIWorker'
+          try {
+            python -m toolsapi_worker.windows_service --startup manual install
+            if ($LASTEXITCODE -ne 0) { throw "Windows service registration returned exit code $LASTEXITCODE." }
+
+            $service = Get-Service -Name $serviceName -ErrorAction Stop
+            if ($service.Status -ne 'Stopped') { throw 'New CI service should be registered but not started.' }
+
+            $prefix = (& python -c "import sys; print(sys.exec_prefix)").Trim()
+            $registered = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
+            if (-not $registered) { throw 'Registered Windows service metadata was not found.' }
+            if ($registered.PathName -notlike "*$prefix*pythonservice.exe*") {
+              throw "Windows service host escaped the active Python prefix: $($registered.PathName)"
+            }
+            if (-not (Test-Path (Join-Path $prefix 'pythonservice.exe'))) {
+              throw 'Explicit pythonservice.exe was not prepared inside the active Python prefix.'
+            }
+            if (-not (Get-ChildItem -Path $prefix -Filter 'python*.dll' -File -ErrorAction SilentlyContinue)) {
+              throw 'Python runtime DLL was not copied beside the Windows service host.'
+            }
+            if (-not (Get-ChildItem -Path $prefix -Filter 'pywintypes*.dll' -File -ErrorAction SilentlyContinue)) {
+              throw 'pywintypes runtime DLL was not copied beside the Windows service host.'
+            }
+          }
+          finally {
+            $existing = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+            if ($existing) {
+              if ($existing.Status -ne 'Stopped') {
+                Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+              }
+              python -m toolsapi_worker.windows_service remove
+              if ($LASTEXITCODE -ne 0) { throw "Windows service cleanup returned exit code $LASTEXITCODE." }
+            }
+          }
       - name: Parse Windows installer scripts
         shell: pwsh
         run: |
