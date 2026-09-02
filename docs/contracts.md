@@ -33,7 +33,11 @@ Workers authenticate with a dedicated bearer credential and stable worker id, th
 
 `POST /api/whisper/worker/claim`
 
-A claim contains the current lease/generation, an explicit operation and an input descriptor:
+A successful claim may contain a job or the existing idle result `job: null`. A null job is not an error and the worker must continue its normal poll loop.
+
+ToolsAPI may deliberately return `job: null` because of administrator scheduling policy even when queued work exists. In particular, when the server-side `If GPU:s are available, do not delegate to CPU-workers` policy is enabled, a worker advertising `device=cpu` receives no new job while another configured fresh accelerated worker is online. CUDA/GPU/NVIDIA/ROCm/HIP and Apple Metal/MLX/MPS advertisements are treated as accelerated by the current ToolsAPI policy. Once that presence expires, CPU assignment resumes automatically. This policy does not alter the request schema, authentication, lease semantics or worker-side retry behavior.
+
+A claim containing work includes the current lease/generation, an explicit operation and an input descriptor:
 
 ```json
 {
