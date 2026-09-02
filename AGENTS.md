@@ -39,9 +39,12 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 ## Whisper runtime
 
 - Linux/CPU/CUDA and native Windows/CPU/CUDA production installation uses the `whisper` package extra and `faster-whisper`.
+- Fresh Ubuntu installation must auto-detect the actual executable Whisper backend after dependencies are installed: use CUDA only when CTranslate2 sees a CUDA device and exposes a supported compute type, otherwise use CPU. Existing `.env` device/compute values remain authoritative on reinstall.
+- Ubuntu diarization auto-detection is independent from Whisper: use CUDA only after PyTorch both reports CUDA availability and successfully executes a CUDA tensor/kernel probe; otherwise use CPU.
 - Apple Silicon macOS production installation uses the `whisper-mlx` package extra and `mlx-whisper`; select it through the advertised Metal/MLX device capability.
 - Speaker diarization uses `pyannote.audio` and `pyannote/speaker-diarization-community-1` on Linux, Windows and macOS. Diarization is enabled by default and must remain explicitly disableable with `TOOLS_WORKER_DIARIZATION_ENABLED=false`.
 - Python 3.10 or newer is the worker runtime on every supported platform.
+- Ubuntu/Debian install paths must bootstrap the matching Python `venv` package automatically when `ensurepip` is missing and apt is available with root/sudo. Do not surface the raw Debian `ensurepip is not available` failure as the final installer result when it is repairable.
 - Windows workers are native Windows services. Do not introduce WSL as a runtime dependency and do not use Task Scheduler as the worker execution model. PowerShell is for installation/service administration only; the worker process is the continuous Python poll loop.
 - Windows service registration must keep `pythonservice.exe`, the loaded `pythonXX.dll` and `pywintypesXX.dll` inside the worker-controlled Python prefix. Never require writes into the base Python installation or Microsoft Store `WindowsApps` package directory.
 - A failed pywin32 install/update command must propagate a non-zero process status. The installer must never continue into registry setup or `Start-Service` after service registration failed.
@@ -67,6 +70,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 - The canonical production runtime configuration lives in the installed project directory at `/opt/toolsapi-worker/.env` by default on Ubuntu, `${HOME}/.local/toolsapi-worker/.env` by default on macOS, `%ProgramData%\Tornevall\toolsapi-worker\.env` by default on Windows, or `${PREFIX}/.env` when a custom prefix is used.
 - Do not move the worker runtime `.env` into `/etc` or another external configuration directory.
 - Install, reinstall and deploy must preserve an existing runtime `.env` and its values.
+- Fresh-host hardware auto-detection may initialize device/compute values only while creating a previously missing `.env`; it must never rewrite an existing host configuration during reinstall/deploy.
 - Uninstall preserves the project `.env` by default unless explicit configuration removal is requested.
 - Never commit `.env`, credentials, worker tokens or deployment secrets.
 
@@ -90,6 +94,8 @@ Tests should cover at minimum when relevant:
 - a successful diarization maps speaker labels onto segments and submits safe structured metadata
 - a diarization failure preserves the transcript and never exposes the Hugging Face token value
 - explicit CUDA configuration does not silently fall back to CPU
+- fresh Ubuntu auto-detection selects CUDA only from executable CTranslate2/PyTorch capability and otherwise selects CPU
+- missing Ubuntu/Debian `ensurepip`/venv support is repaired through the matching apt venv package when privilege is available
 - explicit accelerated devices are validated before capability advertisement and before the first live claim after every process start
 - Windows GPU policy covers Pascal compute capability 6.1, a modern fp16-capable capability set, compatible PyTorch CUDA channel selection and explicit index override behavior without requiring a physical CI GPU
 - pyannote `auto` device preference selects CUDA before Apple MPS before CPU
