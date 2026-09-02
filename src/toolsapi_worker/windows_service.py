@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import filecmp
 import shutil
 import subprocess
 import sys
@@ -61,7 +62,7 @@ def _copy_runtime_file(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_file():
         try:
-            if source.stat().st_size == target.stat().st_size:
+            if filecmp.cmp(source, target, shallow=False):
                 return
         except OSError:
             pass
