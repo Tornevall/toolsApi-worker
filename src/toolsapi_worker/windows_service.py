@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import time
@@ -8,7 +9,9 @@ from pathlib import Path
 if sys.platform != "win32":
     raise RuntimeError("The ToolsAPI Windows service module is only available on Windows.")
 
+import pywintypes
 import servicemanager
+import win32api
 import win32event
 import win32service
 import win32serviceutil
@@ -42,6 +45,87 @@ def configured_python() -> Path:
     if not candidate.is_file():
         raise RuntimeError(f"Worker virtual-environment Python was not found at {candidate}.")
     return candidate
+
+
+def _copy_runtime_file(source: Path, target: Path) -> None:
+    if not source.is_file():
+        raise RuntimeError(f"Required Windows service runtime file was not found: {source}")
+
+    try:
+        same_file = source.resolve() == target.resolve()
+    except OSError:
+        same_file = False
+    if same_file:
+        return
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_file():
+        try:
+            if source.stat().st_size == target.stat().st_size:
+                return
+        except OSError:
+            pass
+    shutil.copy2(source, target)
+
+
+def _pythonservice_source() -> Path:
+    return Path(win32service.__file__).with_name("pythonservice.exe")
+
+
+def _python_runtime_dll() -> Path:
+    dll_handle = getattr(sys, "dllhandle", None)
+    if dll_handle is None:
+        raise RuntimeError("Could not determine the loaded Windows Python runtime DLL.")
+    return Path(win32api.GetModuleFileName(dll_handle))
+
+
+def _pywintypes_runtime_dll() -> Path:
+    imported = Path(pywintypes.__file__)
+    if imported.suffix.lower() == ".dll" and imported.is_file():
+        return imported
+
+    filename = f"pywintypes{sys.version_info.major}{sys.version_info.minor}.dll"
+    candidates = [
+        Path(sys.prefix) / filename,
+        Path(win32service.__file__).parent.parent / "pywin32_system32" / filename,
+        imported.parent / filename,
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError(f"Could not locate the pywin32 helper DLL {filename}.")
+
+
+def prepare_service_host() -> Path:
+    """Prepare a service host entirely inside the active worker virtualenv.
+
+    pywin32's default service-registration path may try to copy pywintypesXX.dll
+    beside the *base* Python DLL. Microsoft Store Python keeps that DLL under the
+    protected WindowsApps package tree, which is intentionally not writable.
+    Supplying an explicit pythonservice.exe skips that global-copy path. Keeping
+    pythonservice.exe, the loaded Python DLL and pywintypesXX.dll together under
+    sys.exec_prefix also gives the LocalSystem service a self-contained host in
+    the worker-controlled installation directory.
+    """
+
+    host_dir = Path(sys.exec_prefix)
+    host_exe = host_dir / "pythonservice.exe"
+    source_host = _pythonservice_source()
+
+    if source_host.is_file():
+        _copy_runtime_file(source_host, host_exe)
+    elif not host_exe.is_file():
+        raise RuntimeError(
+            "Could not locate pythonservice.exe in pywin32 or the worker virtual environment."
+        )
+
+    python_dll = _python_runtime_dll()
+    _copy_runtime_file(python_dll, host_dir / python_dll.name)
+
+    pywintypes_dll = _pywintypes_runtime_dll()
+    _copy_runtime_file(pywintypes_dll, host_dir / pywintypes_dll.name)
+
+    return host_exe
 
 
 class ToolsApiWorkerService(win32serviceutil.ServiceFramework):
@@ -113,8 +197,12 @@ class ToolsApiWorkerService(win32serviceutil.ServiceFramework):
         self.child = None
 
 
-def main() -> None:
-    win32serviceutil.HandleCommandLine(ToolsApiWorkerService)
+def main(argv: list[str] | None = None) -> None:
+    host_exe = prepare_service_host()
+    ToolsApiWorkerService._exe_name_ = str(host_exe)
+    result = win32serviceutil.HandleCommandLine(ToolsApiWorkerService, argv=argv)
+    if result not in (None, 0):
+        raise SystemExit(int(result))
 
 
 if __name__ == "__main__":
