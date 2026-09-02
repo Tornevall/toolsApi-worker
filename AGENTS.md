@@ -43,6 +43,8 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 - Speaker diarization uses `pyannote.audio` and `pyannote/speaker-diarization-community-1` on Linux, Windows and macOS. Diarization is enabled by default and must remain explicitly disableable with `TOOLS_WORKER_DIARIZATION_ENABLED=false`.
 - Python 3.10 or newer is the worker runtime on every supported platform.
 - Windows workers are native Windows services. Do not introduce WSL as a runtime dependency and do not use Task Scheduler as the worker execution model. PowerShell is for installation/service administration only; the worker process is the continuous Python poll loop.
+- Windows service registration must keep `pythonservice.exe`, the loaded `pythonXX.dll` and `pywintypesXX.dll` inside the worker-controlled Python prefix. Never require writes into the base Python installation or Microsoft Store `WindowsApps` package directory.
+- A failed pywin32 install/update command must propagate a non-zero process status. The installer must never continue into registry setup or `Start-Service` after service registration failed.
 - Native Windows CUDA must be validated before a worker configured for `cuda` starts. An explicit CUDA configuration must fail closed when CTranslate2/faster-whisper or PyTorch/pyannote cannot execute on the NVIDIA GPU; never silently fall back to CPU.
 - Do not treat the maximum CUDA version printed by `nvidia-smi` as the installed worker runtime version. Current CTranslate2/faster-whisper Windows execution requires its documented CUDA 12 cuBLAS/cuDNN runtime even when a newer NVIDIA driver advertises CUDA 13 capability.
 - Fresh Windows NVIDIA installs must select the Whisper compute type from CTranslate2's actual reported CUDA capability instead of hard-coding fp16. Preserve preference for `float16`/`int8_float16` on capable GPUs, while allowing `int8_float32` or `float32` on Pascal-class devices such as compute capability 6.1.
@@ -97,6 +99,7 @@ Tests should cover at minimum when relevant:
 - existing runtime `.env` survives reinstall/deploy
 - install and uninstall preserve configuration according to documented policy
 - macOS launchd installer output can resolve the same ffmpeg directory validated during installation
+- Windows service tests verify the explicit worker-local service host/runtime DLL layout, registration failure exit propagation and a real Service Control Manager register/remove cycle on the Windows runner
 - Windows PowerShell installer/uninstaller scripts parse on a Windows runner, the native Windows service module imports, and core protocol/runtime tests run on Windows without requiring a live provider or GPU
 
 ## Documentation
