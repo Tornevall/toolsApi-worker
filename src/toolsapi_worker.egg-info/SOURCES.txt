@@ -14,8 +14,10 @@ src/toolsapi_worker.egg-info/entry_points.txt
 src/toolsapi_worker.egg-info/requires.txt
 src/toolsapi_worker.egg-info/top_level.txt
 tests/test_api.py
+tests/test_bootstrap_venv.py
 tests/test_cli.py
 tests/test_config.py
+tests/test_detect_runtime_device.py
 tests/test_diarization.py
 tests/test_runtime.py
 tests/test_runtime_preflight.py
