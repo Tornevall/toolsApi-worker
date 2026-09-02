@@ -55,7 +55,7 @@ Python 3.10 or newer is the runtime on all supported platforms. Windows runs as 
 
 ## Local installation
 
-`make install` always installs into a project-local `.venv`. It does not modify system Python and therefore works with PEP 668-managed Homebrew Python installations.
+`make install` always installs into a project-local `.venv`. It does not modify system Python and therefore works with PEP 668-managed Homebrew Python installations. On Debian/Ubuntu, if Python reports that `ensurepip`/venv support is missing, the installer automatically installs the matching `pythonX.Y-venv` package (falling back to `python3-venv`) when root or sudo is available, then retries the venv creation.
 
 ```bash
 git clone https://github.com/Tornevall/toolsApi-worker.git
@@ -64,7 +64,7 @@ make install
 make status
 ```
 
-On Apple Silicon macOS, `make install` installs the MLX Whisper extra. On other Unix-like platforms it installs the `faster-whisper` extra. Both extras also install pyannote speaker diarization dependencies.
+On Apple Silicon macOS, `make install` installs the MLX Whisper extra. On other Unix-like platforms it installs the `faster-whisper` extra. Both extras also install pyannote speaker diarization dependencies. On Linux, `make install` also prints the runtime device/compute values that a fresh system install would select from the actual CTranslate2/PyTorch capabilities.
 
 Run the local worker with:
 
@@ -210,7 +210,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-windows.ps1 -Remove
 
 ## Ubuntu installation
 
-Ubuntu remains the primary Linux host platform. The system installer installs the worker plus the `whisper` runtime extra, including faster-whisper and pyannote diarization dependencies.
+Ubuntu remains the primary Linux host platform. The system installer installs the worker plus the `whisper` runtime extra, including faster-whisper and pyannote diarization dependencies. A missing Debian/Ubuntu Python venv package is bootstrapped automatically when root/sudo is available.
 
 ```bash
 git clone https://github.com/Tornevall/toolsApi-worker.git
@@ -218,7 +218,9 @@ cd toolsApi-worker
 sudo ./scripts/install.sh
 ```
 
-The installer creates a dedicated `toolsapi-worker` system user, installs the package into `/opt/toolsapi-worker/.venv`, creates `/opt/toolsapi-worker/.env` when missing, installs the systemd unit and enables it. Existing project `.env` values are preserved on reinstall/deploy.
+The installer creates a dedicated `toolsapi-worker` system user, installs the package into `/opt/toolsapi-worker/.venv`, creates `/opt/toolsapi-worker/.env` when missing, installs the systemd unit and enables it. On a fresh `.env`, it probes the installed runtime and selects CUDA only when CTranslate2 can actually execute on NVIDIA; otherwise Whisper defaults to CPU with the best available CPU compute type (normally `int8`). Diarization is detected independently and uses CUDA only after PyTorch successfully executes a CUDA tensor operation; otherwise it uses CPU. A server with no NVIDIA GPU is therefore a normal supported CPU worker and requires no special override.
+
+Existing project `.env` values are preserved on reinstall/deploy. Auto-detection initializes only a previously missing `.env`; it never silently rewrites a deliberately configured worker.
 
 After configuring `/opt/toolsapi-worker/.env`:
 
@@ -256,6 +258,8 @@ TOOLS_WORKER_DIARIZATION_DEVICE=auto
 TOOLS_WORKER_TEMP_ROOT=
 ```
 
+`TOOLS_WORKER_ID` is operator-selected. Give every worker a stable unique id such as `datacenter0-cpu-01`, `windows-gpu-01` or `macos-apple-silicon`; the dedicated ToolsAPI worker credential name must match that id exactly. The stable id is also what ToolsAPI can use for explicit admin routing and benchmark/test selection.
+
 `TOOLS_WORKER_POLL_SECONDS` is only the idle/no-job and transient claim retry interval. Active-job liveness is independent and uses `TOOLS_WORKER_HEARTBEAT_SECONDS`, so a 60-second idle poll does not weaken a running lease's normal 30-second heartbeat.
 
 `TOOLS_WORKER_DIARIZATION_HF_TOKEN` is only used locally to acquire/access the pyannote model. The worker never submits its value to ToolsAPI. It may report only whether a token was present. `TOOLS_WORKER_DIARIZATION_MODEL_DIR` can point at an already available local Community-1 directory and avoids requiring the job payload to choose or install code.
@@ -272,7 +276,7 @@ make check
 make smoke-install
 ```
 
-Protocol/runtime unit tests do not require loading a real Whisper or pyannote model. Diarization tests use injected deterministic pipeline doubles and do not make live Hugging Face calls. The Ubuntu system-install GitHub Actions jobs exercise the production `whisper` dependency extra. CI also verifies that `make install` works on macOS without modifying managed system Python and validates that the generated launchd service receives the resolved ffmpeg directory in PATH.
+Protocol/runtime unit tests do not require loading a real Whisper or pyannote model. Diarization tests use injected deterministic pipeline doubles and do not make live Hugging Face calls. The Ubuntu system-install GitHub Actions jobs exercise the production `whisper` dependency extra. Deterministic tests also cover the Debian/Ubuntu missing-venv bootstrap and CPU/CUDA runtime selection without requiring a physical GPU. CI additionally verifies that `make install` works on macOS without modifying managed system Python and validates that the generated launchd service receives the resolved ffmpeg directory in PATH.
 
 CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus Ubuntu root/systemd install-reinstall-uninstall coverage, macOS local/install coverage and Windows native protocol/runtime tests with PowerShell/service validation. Windows CI executes the same GPU policy helper used by the installer with deterministic Pascal and modern capability fixtures, verifies that service host/runtime files remain in the active worker-controlled Python prefix, propagates pywin32 registration failures, and performs a real Service Control Manager register/remove cycle. CI does not pretend to provide a physical NVIDIA GPU; native CUDA is validated by deterministic preflight tests in CI and by the installer plus every worker process start on actual GPU hosts.
 
@@ -311,3 +315,4 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 - `Tornevall/toolsApi-worker#13` - Cross-platform worker diarization
 - `Tornevall/toolsApi-worker#17` - Native Windows Pascal CUDA compatibility
 - `Tornevall/toolsApi-worker#21` - Microsoft Store Python native Windows service registration
+- `Tornevall/toolsApi-worker#23` - Ubuntu venv bootstrap and runtime device auto-detection

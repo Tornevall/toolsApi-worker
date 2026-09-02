@@ -32,10 +32,14 @@ help:
 		'make uninstall       Remove the platform service installation'
 
 install:
-	$(PYTHON) -m venv "$(VENV)"
+	bash ./scripts/bootstrap-venv.sh "$(PYTHON)" "$(VENV)"
 	"$(VENV_PYTHON)" -m pip install --upgrade pip setuptools wheel
 	"$(VENV_PYTHON)" -m pip install ".[${LOCAL_WHISPER_EXTRA}]"
 	@printf '%s\n' "Installed toolsapi-worker in $(VENV)."
+	@if [ "$(UNAME_S)" = "Linux" ]; then \
+		printf '%s\n' 'Detected fresh-host runtime defaults:'; \
+		"$(VENV_PYTHON)" ./scripts/detect-runtime-device.py; \
+	fi
 	@printf '%s\n' "Run with: make run"
 	@if [ "$(UNAME_S)" = "Darwin" ] && [ "$(UNAME_M)" = "arm64" ] && ! command -v ffmpeg >/dev/null 2>&1; then \
 		printf '%s\n' 'Whisper on macOS also requires ffmpeg: brew install ffmpeg'; \
@@ -58,7 +62,7 @@ test:
 	$(PYTHON) -m unittest discover -s tests -v
 
 lint:
-	$(PYTHON) -m compileall -q src tests
+	$(PYTHON) -m compileall -q src tests scripts/detect-runtime-device.py
 	$(PYTHON) -m toolsapi_worker.cli --version
 
 check: lint test

@@ -27,6 +27,8 @@ All notable changes to toolsApi-worker are documented here.
 - Windows CI coverage for deterministic protocol/runtime tests, Windows service module import/compile checks, real Service Control Manager registration/removal and PowerShell installer syntax/content validation.
 - Per-user macOS launchd installer and uninstaller with configuration preservation.
 - PEP 668-safe local installation through an isolated project virtual environment.
+- Ubuntu/Debian venv bootstrap that installs the matching `pythonX.Y-venv` package (with `python3-venv` fallback) when `ensurepip` is missing and root/sudo is available.
+- Fresh Ubuntu runtime auto-detection for CTranslate2 Whisper device/compute type and independent PyTorch diarization device selection, including a real CUDA tensor probe before diarization selects CUDA.
 - Safe `--env-file` configuration loading for launchd and direct CLI execution without shell evaluation.
 - macOS CI coverage for local installation, launchd install/reinstall/uninstall and plist validation.
 - Independent heartbeat reporting while model loading, transcription or diarization is slow, so liveness does not depend on new transcript segments.
@@ -50,6 +52,8 @@ All notable changes to toolsApi-worker are documented here.
 - Diarization capability advertisement now verifies both the installed pyannote/PyTorch runtime and the configured execution device; an explicit CUDA or Apple GPU device is not advertised when PyTorch cannot use it.
 - Explicit accelerator configuration is revalidated on every worker process start before the first claim, so preserved `.env` changes, driver/library changes, or CPU-only PyTorch/CTranslate2 builds cannot cause a worker to advertise and consume GPU work it cannot execute.
 - Pyannote `auto` device selection prefers CUDA, then Apple MPS, then CPU.
+- Fresh Ubuntu system installs now initialize Whisper to the fastest executable detected CTranslate2 backend (`cuda` with the best supported compute type, otherwise `cpu`) and initialize diarization independently to CUDA only after a successful PyTorch CUDA kernel probe; existing `.env` values are never rewritten on reinstall.
+- `make install` now uses the shared venv bootstrap helper so a repairable Debian/Ubuntu missing-`ensurepip` failure installs the required apt venv package automatically instead of stopping at the raw Python error.
 - Fresh Windows NVIDIA installs no longer hard-code `float16`. The installer queries CTranslate2's actual CUDA compute-type capability and selects the best supported worker type in priority order `float16`, `int8_float16`, `int8_float32`, then `float32`; Pascal GPUs such as GTX 1060 can therefore use `int8_float32` instead of being rejected by the old fp16-only preflight.
 - Existing Windows `.env` values remain authoritative. An explicitly configured CUDA compute type that the GPU does not support now fails with the exact supported-type list instead of being misreported as a missing CUDA installation.
 - Windows GPU diagnostics now distinguish NVIDIA driver visibility from the CUDA 12 cuBLAS/cuDNN 9 runtime required by current CTranslate2/faster-whisper. The maximum CUDA version printed by `nvidia-smi` is no longer treated as the worker runtime version.
