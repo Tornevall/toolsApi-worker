@@ -24,7 +24,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 - ToolsAPI sends declarative job requirements, never arbitrary shell/install commands or executable code.
 - Handlers and dependencies are installed through normal worker deploy/versioning.
 - Each delegated job identifies a handler contract version.
-- Workers advertise installed handler versions and capabilities and only claim compatible jobs.
+- Workers truthfully advertise installed handler versions and capabilities. ToolsAPI uses those advertisements for automatic scheduling. A job actually returned by a supported current ToolsAPI claim policy is authoritative: an administrator-selected exact target may intentionally exceed the worker's advertised model, diarization or URL scheduler capability. The worker must attempt the returned declarative job and report a real failure through the normal terminal path when its local runtime cannot satisfy it; never falsify capability advertisement, silently downgrade requirements or bypass lease safety to accommodate forced work.
 - Live Whisper execution requires a capability-gated ToolsAPI claim policy. Refuse live work when the server does not advertise the required `claim_policy_version`.
 - `whisper.transcribe` contract version 2 is diarization-aware. Workers must advertise `supports_diarization`; a worker that cannot run speaker diarization must never advertise that capability merely to receive work.
 - A claim with `diarization_requested=true` must run worker-side diarization before the completion payload is submitted. Do not silently defer a v2 diarization request back to ToolsAPI.

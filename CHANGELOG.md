@@ -46,6 +46,7 @@ All notable changes to toolsApi-worker are documented here.
 
 ### Changed
 
+- Clarified exact administrator-target claim semantics for ToolsAPI #1732 / worker #26: capability advertisement continues to govern automatic scheduling, while a job actually returned by a supported current claim policy is authoritative even when an exact target exceeds advertised model, diarization or URL capability. The worker keeps the existing runtime behavior of attempting the unchanged claim and reporting a real retryable/terminal failure when unsupported; wire schema, authentication, lease handling and capability advertisement are unchanged.
 - Documented that ToolsAPI may intentionally return the existing successful idle `job: null` response to CPU workers while a fresh accelerated worker is online when the administrator GPU-preference scheduling policy is enabled. The worker keeps polling normally; request schema, authentication, lease handling and runtime code are unchanged.
 - `whisper.transcribe` is now contract version 2 and requires ToolsAPI `claim_policy_version >= 2`, preventing older workers/servers from silently consuming diarization-required jobs.
 - Contract-version-2 claims now accept `operation=transcribe|diarize`; omitted operation remains compatible as `transcribe`, while unknown operations fail closed.

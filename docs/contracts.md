@@ -17,7 +17,7 @@ The live `whisper.transcribe` claim request advertises the worker execution capa
 }
 ```
 
-ToolsAPI must leave incompatible jobs queued rather than mutating them. A job with `diarization_requested=true` may only be assigned to a version 2 worker that advertises `supports_diarization=true`. Diarization-only work is also restricted to workers that truthfully advertise this capability.
+For automatic scheduling, ToolsAPI leaves incompatible jobs queued rather than mutating them. A normal automatically selected job with `diarization_requested=true` is assigned only to a version 2 worker that advertises `supports_diarization=true`. Diarization-only work is also restricted to workers that truthfully advertise this capability. An administrator-selected exact remote target is different: after worker authentication and current-contract validation, ToolsAPI may intentionally return that exact transcription job despite an advertised model, diarization or URL capability mismatch. This does not change what the worker advertises or the claim schema. The returned claim is authoritative and the worker attempts its unchanged requirements; a locally unsupported requirement is reported through the ordinary failure path.
 
 The current worker runtime defaults to `accepts_url_sources=false`, so live execution is restricted to Tools-hosted upload/staged media while URL fetching remains outside the worker runtime.
 
@@ -33,7 +33,7 @@ Workers authenticate with a dedicated bearer credential and stable worker id, th
 
 `POST /api/whisper/worker/claim`
 
-A successful claim may contain a job or the existing idle result `job: null`. A null job is not an error and the worker must continue its normal poll loop.
+A successful claim may contain a job or the existing idle result `job: null`. A null job is not an error and the worker must continue its normal poll loop. A returned job from a supported current claim policy is authoritative. The worker does not re-run ToolsAPI's scheduler decision against its own advertised capability set: if an exact administrator target requests an unsupported configured model, unavailable diarization, or disabled URL execution, the normal runtime attempt fails explicitly and is submitted through the existing retryable/terminal failure path instead of silently discarding the claim. Lease ownership and terminal acknowledgement rules are unchanged.
 
 ToolsAPI may deliberately return `job: null` because of administrator scheduling policy even when queued work exists. In particular, when the server-side `If GPU:s are available, do not delegate to CPU-workers` policy is enabled, a worker advertising `device=cpu` receives no new job while another configured fresh accelerated worker is online. CUDA/GPU/NVIDIA/ROCm/HIP and Apple Metal/MLX/MPS advertisements are treated as accelerated by the current ToolsAPI policy. Once that presence expires, CPU assignment resumes automatically. This policy does not alter the request schema, authentication, lease semantics or worker-side retry behavior.
 
