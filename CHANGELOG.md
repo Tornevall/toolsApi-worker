@@ -24,7 +24,7 @@ All notable changes to toolsApi-worker are documented here.
 - Native Windows NVIDIA detection and fail-closed CUDA validation for both CTranslate2/faster-whisper and PyTorch/pyannote before a CUDA-configured service starts.
 - Optional Windows installer `-TorchIndexUrl` support for installing the official CUDA-enabled PyTorch wheel channel appropriate for the host.
 - Windows GPU policy helpers and deterministic Windows regression coverage for Pascal compute capability 6.1, modern fp16-capable GPUs, automatic CUDA 12.6 PyTorch selection for Maxwell/Pascal/Volta and explicit PyTorch index overrides.
-- Windows CI coverage for deterministic protocol/runtime tests, Windows service module import/compile checks and PowerShell installer syntax/content validation.
+- Windows CI coverage for deterministic protocol/runtime tests, Windows service module import/compile checks, real Service Control Manager registration/removal and PowerShell installer syntax/content validation.
 - Per-user macOS launchd installer and uninstaller with configuration preservation.
 - PEP 668-safe local installation through an isolated project virtual environment.
 - Safe `--env-file` configuration loading for launchd and direct CLI execution without shell evaluation.
@@ -58,6 +58,8 @@ All notable changes to toolsApi-worker are documented here.
 - Explicit Windows `cuda` configuration does not permit silent CPU fallback. CTranslate2 must see a native CUDA device and the selected compute type, and PyTorch must execute a CUDA kernel for enabled CUDA diarization.
 - Windows `.env` parsing accepts a UTF-8 BOM written by Windows PowerShell 5.1, so preserved configuration remains usable across reinstall and service startup.
 - Native Windows service installation and update now place pywin32 `--startup auto` before the `install`/`update` action, matching `win32serviceutil.HandleCommandLine()` syntax instead of falling through to the usage screen and aborting registration.
+- Native Windows service registration now prepares an explicit `pythonservice.exe` together with the active `pythonXX.dll` and `pywintypesXX.dll` inside the worker Python prefix. This avoids pywin32 attempting to write helper DLLs into a Microsoft Store Python `WindowsApps` package while giving LocalSystem a worker-controlled service host.
+- Pywin32 service-registration return codes are now propagated by the worker service module, so failed install/update operations stop the PowerShell installer before registry setup or `Start-Service` instead of being printed and then ignored.
 - `make install` now creates and installs into `.venv` instead of attempting to modify the system/Homebrew Python environment.
 - `make install-system` and `make uninstall` dispatch to systemd tooling on Linux and launchd tooling on macOS; Windows uses the dedicated elevated PowerShell service installer scripts.
 - Corrected `.env.example` so it documents the canonical runtime configuration paths for Ubuntu, macOS and the Windows service.
@@ -68,7 +70,7 @@ All notable changes to toolsApi-worker are documented here.
 - `toolsapi-worker run` executes the live serial polling lifecycle.
 - URL-source execution remains disabled by default (`TOOLS_WORKER_ACCEPTS_URL_SOURCES=false`). Initial live execution is restricted to lease-bound Tools-hosted media.
 - Runtime concurrency is deliberately limited to `1` until parallel ownership/lifecycle handling has dedicated coverage.
-- Development version advanced from `0.1.0.dev0` to `0.1.1.dev0` for the compatible Windows GPU installer/runtime fix.
+- Development version advanced from `0.1.1.dev0` to `0.1.2.dev0` for the Microsoft Store Python/native Windows service registration repair.
 
 ### Security
 

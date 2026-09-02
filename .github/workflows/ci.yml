@@ -63,6 +63,86 @@ jobs:
         run: |
           python -m py_compile src/toolsapi_worker/windows_service.py
           python -c "import toolsapi_worker.windows_service as service; assert service.SERVICE_NAME == 'ToolsAPIWorker'"
+      - name: Exercise native Windows service registration and startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $serviceName = 'ToolsAPIWorker'
+          $envFile = $null
+          try {
+            python -m toolsapi_worker.windows_service --startup manual install
+            if ($LASTEXITCODE -ne 0) { throw "Windows service registration returned exit code $LASTEXITCODE." }
+
+            $service = Get-Service -Name $serviceName -ErrorAction Stop
+            if ($service.Status -ne 'Stopped') { throw 'New CI service should be registered but not started.' }
+
+            $prefix = (& python -c "import sys; print(sys.exec_prefix)").Trim()
+            $pythonExe = (& python -c "import sys; print(sys.executable)").Trim()
+            $registered = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
+            if (-not $registered) { throw 'Registered Windows service metadata was not found.' }
+            if ($registered.PathName -notlike "*$prefix*pythonservice.exe*") {
+              throw "Windows service host escaped the active Python prefix: $($registered.PathName)"
+            }
+            if (-not (Test-Path (Join-Path $prefix 'pythonservice.exe'))) {
+              throw 'Explicit pythonservice.exe was not prepared inside the active Python prefix.'
+            }
+            if (-not (Get-ChildItem -Path $prefix -Filter 'python*.dll' -File -ErrorAction SilentlyContinue)) {
+              throw 'Python runtime DLL was not copied beside the Windows service host.'
+            }
+            if (-not (Get-ChildItem -Path $prefix -Filter 'pywintypes*.dll' -File -ErrorAction SilentlyContinue)) {
+              throw 'pywintypes runtime DLL was not copied beside the Windows service host.'
+            }
+
+            # Give LocalSystem the same bounded runtime inputs the production installer writes.
+            # The loop points at an intentionally closed local port so no real provider or ToolsAPI
+            # traffic is needed; WorkerApiError is retried and keeps the service alive.
+            $envFile = Join-Path $prefix 'toolsapi-worker-service-ci.env'
+            @(
+              'TOOLS_API_BASE_URL=http://127.0.0.1:9',
+              'TOOLS_WORKER_TOKEN=ci-service-token',
+              'TOOLS_WORKER_ID=windows-ci-service',
+              'TOOLS_WORKER_CONCURRENCY=1',
+              'TOOLS_WORKER_POLL_SECONDS=1',
+              'TOOLS_WORKER_HEARTBEAT_SECONDS=1',
+              'TOOLS_WORKER_ENABLED_HANDLERS=whisper.transcribe',
+              'TOOLS_WORKER_WHISPER_MODELS=small',
+              'TOOLS_WORKER_WHISPER_DEVICE=cpu',
+              'TOOLS_WORKER_WHISPER_COMPUTE_TYPE=int8',
+              'TOOLS_WORKER_ACCEPTS_URL_SOURCES=false',
+              'TOOLS_WORKER_DIARIZATION_ENABLED=false',
+              'TOOLS_WORKER_DIARIZATION_PROVIDER=pyannote',
+              'TOOLS_WORKER_DIARIZATION_MODEL=pyannote/speaker-diarization-community-1',
+              'TOOLS_WORKER_DIARIZATION_DEVICE=auto'
+            ) | Set-Content -Path $envFile -Encoding UTF8
+
+            $parametersKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$serviceName\Parameters"
+            New-Item -Path $parametersKey -Force | Out-Null
+            New-ItemProperty -Path $parametersKey -Name 'EnvFile' -PropertyType String -Value $envFile -Force | Out-Null
+            New-ItemProperty -Path $parametersKey -Name 'PythonExe' -PropertyType String -Value $pythonExe -Force | Out-Null
+
+            Start-Service -Name $serviceName
+            $service = Get-Service -Name $serviceName
+            $service.WaitForStatus('Running', (New-TimeSpan -Seconds 15))
+            Start-Sleep -Seconds 3
+            $service.Refresh()
+            if ($service.Status -ne 'Running') {
+              throw "Windows service did not remain running under LocalSystem; status=$($service.Status)."
+            }
+          }
+          finally {
+            $existing = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+            if ($existing) {
+              if ($existing.Status -ne 'Stopped') {
+                Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+                try { $existing.WaitForStatus('Stopped', (New-TimeSpan -Seconds 15)) } catch { }
+              }
+              python -m toolsapi_worker.windows_service remove
+              if ($LASTEXITCODE -ne 0) { throw "Windows service cleanup returned exit code $LASTEXITCODE." }
+            }
+            if ($envFile -and (Test-Path $envFile)) {
+              Remove-Item -Path $envFile -Force
+            }
+          }
       - name: Parse Windows installer scripts
         shell: pwsh
         run: |

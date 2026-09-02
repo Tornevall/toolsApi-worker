@@ -147,7 +147,7 @@ REMOVE_CONFIG=true bash ./scripts/uninstall-macos.sh
 Requirements:
 
 - Native Windows 10/11 or Windows Server with PowerShell
-- Python 3.10 or newer installed for Windows
+- Python 3.10 or newer installed for Windows; standard python.org and Microsoft Store Python installs are supported
 - `ffmpeg` in the Windows system `PATH` for pyannote audio handling
 - For NVIDIA GPU execution: a native Windows NVIDIA driver plus CUDA 12 cuBLAS and cuDNN 9 visible to the service process
 - A CUDA-enabled PyTorch build compatible with the actual NVIDIA architecture when pyannote should run on the GPU
@@ -161,6 +161,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
 ```
 
 The default prefix is `%ProgramData%\Tornevall\toolsapi-worker`. The installer creates an isolated `.venv`, installs `faster-whisper`, pyannote, PyTorch and the Windows service runtime, preserves an existing `.env`, and registers `ToolsAPIWorker` as an automatic Windows service. The service continuously runs the normal ToolsAPI poll loop; there is no Task Scheduler cadence and no interactive CMD process.
+
+Windows service registration prepares an explicit `pythonservice.exe` inside the worker Python prefix and keeps the active `pythonXX.dll` and `pywintypesXX.dll` beside it. This avoids pywin32's default attempt to copy helper DLLs into the base Python installation. In particular, Microsoft Store Python keeps its base runtime under the protected `C:\Program Files\WindowsApps\...` package tree, and the worker never needs write access there. The Service Control Manager therefore points at the worker-controlled service host under `%ProgramData%` rather than relying on a writable global Python installation.
+
+A pywin32 service-registration error is returned as a non-zero process exit code. The PowerShell installer stops immediately in that case and does not continue into service registry parameters or `Start-Service` after a failed install/update.
 
 Configure:
 
@@ -270,7 +274,7 @@ make smoke-install
 
 Protocol/runtime unit tests do not require loading a real Whisper or pyannote model. Diarization tests use injected deterministic pipeline doubles and do not make live Hugging Face calls. The Ubuntu system-install GitHub Actions jobs exercise the production `whisper` dependency extra. CI also verifies that `make install` works on macOS without modifying managed system Python and validates that the generated launchd service receives the resolved ffmpeg directory in PATH.
 
-CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus Ubuntu root/systemd install-reinstall-uninstall coverage, macOS local/install coverage and Windows native protocol/runtime tests with PowerShell/service syntax validation. Windows CI executes the same GPU policy helper used by the installer with deterministic Pascal and modern capability fixtures. CI does not pretend to provide a physical NVIDIA GPU; native CUDA is validated by deterministic preflight tests in CI and by the installer plus every worker process start on actual GPU hosts.
+CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus Ubuntu root/systemd install-reinstall-uninstall coverage, macOS local/install coverage and Windows native protocol/runtime tests with PowerShell/service validation. Windows CI executes the same GPU policy helper used by the installer with deterministic Pascal and modern capability fixtures, verifies that service host/runtime files remain in the active worker-controlled Python prefix, propagates pywin32 registration failures, and performs a real Service Control Manager register/remove cycle. CI does not pretend to provide a physical NVIDIA GPU; native CUDA is validated by deterministic preflight tests in CI and by the installer plus every worker process start on actual GPU hosts.
 
 ## Deployment
 
@@ -306,3 +310,4 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 - `Tornevall/toolsApi-worker#10` - macOS ffmpeg PATH and idle polling follow-up
 - `Tornevall/toolsApi-worker#13` - Cross-platform worker diarization
 - `Tornevall/toolsApi-worker#17` - Native Windows Pascal CUDA compatibility
+- `Tornevall/toolsApi-worker#21` - Microsoft Store Python native Windows service registration
