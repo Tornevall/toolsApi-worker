@@ -50,6 +50,15 @@ class WindowsGpuPolicyTest(unittest.TestCase):
         self.assertIn("nvidia-smi only confirms the NVIDIA driver", installer)
         self.assertNotIn('Set-EnvValue -Name "TOOLS_WORKER_WHISPER_COMPUTE_TYPE" -Value "float16"', installer)
 
+    def test_installer_places_pywin32_options_before_service_action(self):
+        root = Path(__file__).resolve().parents[1]
+        installer = (root / "scripts" / "install-windows.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("toolsapi_worker.windows_service --startup auto update", installer)
+        self.assertIn("toolsapi_worker.windows_service --startup auto install", installer)
+        self.assertNotIn("toolsapi_worker.windows_service update --startup auto", installer)
+        self.assertNotIn("toolsapi_worker.windows_service install --startup auto", installer)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -57,6 +57,7 @@ All notable changes to toolsApi-worker are documented here.
 - Windows diarization preflight now executes and synchronizes a real one-element CUDA tensor operation rather than relying only on `torch.cuda.is_available()`, catching architecture-incompatible CUDA wheels before service installation.
 - Explicit Windows `cuda` configuration does not permit silent CPU fallback. CTranslate2 must see a native CUDA device and the selected compute type, and PyTorch must execute a CUDA kernel for enabled CUDA diarization.
 - Windows `.env` parsing accepts a UTF-8 BOM written by Windows PowerShell 5.1, so preserved configuration remains usable across reinstall and service startup.
+- Native Windows service installation and update now place pywin32 `--startup auto` before the `install`/`update` action, matching `win32serviceutil.HandleCommandLine()` syntax instead of falling through to the usage screen and aborting registration.
 - `make install` now creates and installs into `.venv` instead of attempting to modify the system/Homebrew Python environment.
 - `make install-system` and `make uninstall` dispatch to systemd tooling on Linux and launchd tooling on macOS; Windows uses the dedicated elevated PowerShell service installer scripts.
 - Corrected `.env.example` so it documents the canonical runtime configuration paths for Ubuntu, macOS and the Windows service.
