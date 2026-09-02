@@ -1,0 +1,2 @@
+[console_scripts]
+toolsapi-worker = toolsapi_worker.cli:main

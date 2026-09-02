@@ -27,20 +27,69 @@ function Resolve-PythonCommand {
 
     if ($Requested) {
         $command = Get-Command $Requested -ErrorAction Stop
-        return @($command.Source)
-    }
-
-    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
-    if ($pythonCommand) {
-        return @($pythonCommand.Source)
+        $candidate = @($command.Source)
+        if (Test-PythonCommand -Command $candidate) {
+            return $candidate
+        }
+        throw "Requested Python command '$Requested' is not a usable Python 3.10+ runtime. Install Python 3.10 or newer and rerun this installer."
     }
 
     $pyCommand = Get-Command py -ErrorAction SilentlyContinue
     if ($pyCommand) {
-        return @($pyCommand.Source, "-3")
+        $candidate = @($pyCommand.Source, "-3")
+        if (Test-PythonCommand -Command $candidate) {
+            return $candidate
+        }
     }
 
-    throw "Python 3.10 or newer is required. Install Python and rerun this installer."
+    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if ($pythonCommand) {
+        $candidate = @($pythonCommand.Source)
+        if (Test-PythonCommand -Command $candidate) {
+            return $candidate
+        }
+    }
+
+    throw "Python 3.10 or newer is required. Install Python from python.org or install the Python Launcher, then rerun this installer. The Microsoft Store app execution alias is not sufficient for this service installation."
+}
+
+function Test-PythonCommand {
+    param([string[]]$Command)
+
+    if (-not $Command -or $Command.Count -lt 1) {
+        return $false
+    }
+
+    $source = ([string]$Command[0]).Trim()
+    if (-not $source) {
+        return $false
+    }
+
+    if ($source.ToLowerInvariant().Contains("\microsoft\windowsapps\")) {
+        return $false
+    }
+
+    $executable = $Command[0]
+    $prefixArguments = @()
+    if ($Command.Count -gt 1) {
+        $prefixArguments = $Command[1..($Command.Count - 1)]
+    }
+
+    try {
+        $output = @(& $executable @prefixArguments -c "import sys; print(sys.executable); raise SystemExit(0 if sys.version_info >= (3, 10) else 2)" 2>$null)
+        if ($LASTEXITCODE -ne 0 -or $output.Count -lt 1) {
+            return $false
+        }
+    } catch {
+        return $false
+    }
+
+    $resolvedExecutable = ([string]($output | Select-Object -Last 1)).Trim()
+    if (-not $resolvedExecutable) {
+        return $false
+    }
+
+    return -not $resolvedExecutable.ToLowerInvariant().Contains("\microsoft\windowsapps\")
 }
 
 function Invoke-ResolvedPython {
@@ -57,6 +106,18 @@ function Invoke-ResolvedPython {
     & $executable @prefixArguments @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "Python command failed with exit code $LASTEXITCODE."
+    }
+}
+
+function Invoke-PipInstall {
+    param(
+        [string[]]$Arguments,
+        [string]$FailureMessage
+    )
+
+    & $VenvPython -m pip install --disable-pip-version-check --prefer-binary @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw $FailureMessage
     }
 }
 
@@ -121,23 +182,24 @@ if ($LASTEXITCODE -ne 0) {
     throw "Python 3.10 or newer is required."
 }
 
-& $VenvPython -m pip install --upgrade pip setuptools wheel
-if ($LASTEXITCODE -ne 0) {
-    throw "Could not update the worker virtual environment."
+Invoke-PipInstall `
+    -Arguments @("--upgrade", "pip", "setuptools", "wheel") `
+    -FailureMessage "Could not update pip, setuptools and wheel in the worker virtual environment."
+
+if ($EffectiveTorchIndexUrl) {
+    Invoke-PipInstall `
+        -Arguments @("--upgrade", "--index-url", $EffectiveTorchIndexUrl, "torch", "torchaudio", "torchcodec") `
+        -FailureMessage "Could not install CUDA-enabled PyTorch, torchaudio and torchcodec from $EffectiveTorchIndexUrl. Verify that the selected PyTorch wheel channel supports this Python version and GPU architecture."
+} else {
+    Invoke-PipInstall `
+        -Arguments @("--upgrade", "torch", "torchaudio", "torchcodec") `
+        -FailureMessage "Could not install PyTorch, torchaudio and torchcodec. Verify that this Python version is supported by the current PyTorch Windows wheels."
 }
 
 $InstallTarget = "$SourceDir[whisper,windows]"
-& $VenvPython -m pip install $InstallTarget
-if ($LASTEXITCODE -ne 0) {
-    throw "Could not install toolsapi-worker Whisper, diarization and Windows service dependencies."
-}
-
-if ($EffectiveTorchIndexUrl) {
-    & $VenvPython -m pip install --upgrade --index-url $EffectiveTorchIndexUrl torch torchaudio
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not install the CUDA-enabled PyTorch/torchaudio build from $EffectiveTorchIndexUrl."
-    }
-}
+Invoke-PipInstall `
+    -Arguments @($InstallTarget) `
+    -FailureMessage "Could not install toolsapi-worker Whisper, diarization and Windows service dependencies after PyTorch was installed. Review the pip resolver output above for the failing package."
 
 if ($FreshConfig) {
     Copy-Item (Join-Path $SourceDir ".env.example") $EnvFile

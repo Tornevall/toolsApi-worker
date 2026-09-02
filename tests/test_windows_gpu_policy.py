@@ -46,9 +46,14 @@ class WindowsGpuPolicyTest(unittest.TestCase):
         self.assertIn("Recovered stale installer-generated CUDA compute type", installer)
         self.assertIn("get_supported_compute_types('cuda')", installer)
         self.assertIn("torch torchaudio", installer)
+        self.assertIn("torchcodec", installer)
         self.assertIn("x=torch.ones(1, device='cuda')", installer)
         self.assertIn("nvidia-smi only confirms the NVIDIA driver", installer)
         self.assertNotIn('Set-EnvValue -Name "TOOLS_WORKER_WHISPER_COMPUTE_TYPE" -Value "float16"', installer)
+
+        torch_install = installer.index('"torch", "torchaudio", "torchcodec"')
+        worker_install = installer.index('$InstallTarget = "$SourceDir[whisper,windows]"')
+        self.assertLess(torch_install, worker_install)
 
     def test_installer_places_pywin32_options_before_service_action(self):
         root = Path(__file__).resolve().parents[1]
@@ -58,6 +63,26 @@ class WindowsGpuPolicyTest(unittest.TestCase):
         self.assertIn("toolsapi_worker.windows_service --startup auto install", installer)
         self.assertNotIn("toolsapi_worker.windows_service update --startup auto", installer)
         self.assertNotIn("toolsapi_worker.windows_service install --startup auto", installer)
+
+    def test_installer_avoids_windowsapps_python_alias(self):
+        root = Path(__file__).resolve().parents[1]
+        installer = (root / "scripts" / "install-windows.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("function Test-PythonCommand", installer)
+        self.assertIn('Contains("\\microsoft\\windowsapps\\")', installer)
+        self.assertIn("Microsoft Store app execution alias is not sufficient", installer)
+
+        py_probe = installer.index("Get-Command py")
+        python_probe = installer.index("Get-Command python")
+        self.assertLess(py_probe, python_probe)
+
+    def test_whisper_extras_include_audio_runtime_dependencies(self):
+        root = Path(__file__).resolve().parents[1]
+        project = (root / "pyproject.toml").read_text(encoding="utf-8")
+
+        self.assertIn('"torch>=2.8"', project)
+        self.assertIn('"torchaudio>=2.8"', project)
+        self.assertIn('"torchcodec>=0.7"', project)
 
 
 if __name__ == "__main__":

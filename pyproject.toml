@@ -15,12 +15,16 @@ dependencies = []
 whisper = [
     "faster-whisper>=1.2.1,<2",
     "pyannote.audio>=4,<5",
-    "torch>=2.2",
+    "torch>=2.8",
+    "torchaudio>=2.8",
+    "torchcodec>=0.7",
 ]
 whisper-mlx = [
     "mlx-whisper>=0.4.3,<0.5",
     "pyannote.audio>=4,<5",
-    "torch>=2.2",
+    "torch>=2.8",
+    "torchaudio>=2.8",
+    "torchcodec>=0.7",
 ]
 windows = [
     "pywin32>=306; platform_system == 'Windows'",

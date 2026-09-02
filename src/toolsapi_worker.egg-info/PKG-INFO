@@ -1,3 +1,25 @@
+Metadata-Version: 2.4
+Name: toolsapi-worker
+Version: 0.1.2.dev0
+Summary: Standalone worker runtime for delegated Tornevall ToolsAPI workloads
+Author: Tornevall Networks
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Provides-Extra: whisper
+Requires-Dist: faster-whisper<2,>=1.2.1; extra == "whisper"
+Requires-Dist: pyannote.audio<5,>=4; extra == "whisper"
+Requires-Dist: torch>=2.8; extra == "whisper"
+Requires-Dist: torchaudio>=2.8; extra == "whisper"
+Requires-Dist: torchcodec>=0.7; extra == "whisper"
+Provides-Extra: whisper-mlx
+Requires-Dist: mlx-whisper<0.5,>=0.4.3; extra == "whisper-mlx"
+Requires-Dist: pyannote.audio<5,>=4; extra == "whisper-mlx"
+Requires-Dist: torch>=2.8; extra == "whisper-mlx"
+Requires-Dist: torchaudio>=2.8; extra == "whisper-mlx"
+Requires-Dist: torchcodec>=0.7; extra == "whisper-mlx"
+Provides-Extra: windows
+Requires-Dist: pywin32>=306; platform_system == "Windows" and extra == "windows"
+
 # toolsApi-worker
 
 Standalone worker runtime for Tornevall Networks ToolsAPI.
