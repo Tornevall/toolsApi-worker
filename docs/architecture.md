@@ -6,15 +6,18 @@ ToolsAPI is the sole authority for job state, assignment, timeout and reassignme
 
 Workers use a pull model:
 
-1. Poll ToolsAPI for eligible work while advertising installed workload capabilities.
-2. Atomically claim one compatible job.
-3. Receive an opaque lease identifier and generation/attempt.
-4. Process only while that lease remains valid.
-5. Send heartbeat/progress reports while processing, including long model-load and diarization phases.
-6. Submit a terminal result using the same lease.
-7. Continue polling only after ToolsAPI has accepted the terminal result or explicitly indicates that the lease is no longer valid.
+1. Start only after the installed runtime satisfies the current workload contract.
+2. Poll ToolsAPI for work while advertising current contract and runtime telemetry.
+3. Atomically claim one assigned job.
+4. Receive an opaque lease identifier and generation/attempt.
+5. Process only while that lease remains valid.
+6. Send heartbeat/progress reports while processing, including long model-load and diarization phases.
+7. Submit a terminal result using the same lease.
+8. Continue polling only after ToolsAPI has accepted the terminal result or explicitly indicates that the lease is no longer valid.
 
 A worker must never decide by itself that an assigned job has timed out or become available to another worker.
+
+An administrator-selected named worker is an exact scheduling constraint. ToolsAPI may perform neutral preparation before that worker claims the job, such as staging a URL-origin source into Tools-hosted media, but another worker must not execute the transcription.
 
 ## Lease safety
 
@@ -50,7 +53,9 @@ After successful completion, the worker reports the result and waits for acknowl
 
 ToolsAPI owns persisted inputs and outputs. A worker never needs direct database or shared-filesystem access.
 
-For media jobs, ToolsAPI issues lease-bound authenticated download access. Workers download to temporary local storage and remove temporary data after the ownership lifecycle finishes.
+Remote Whisper jobs use a uniform media boundary. Uploaded/retained media and URL-origin sources staged by ToolsAPI are all delivered as authenticated lease-bound `tools_media`. The standalone worker does not fetch arbitrary external source URLs itself.
+
+Workers download to temporary local storage and remove temporary data after the ownership lifecycle finishes.
 
 For `whisper.transcribe` contract version 2, the worker returns the transcript plus structured diarization metadata when requested. ToolsAPI remains canonical for persisted speaker-aware presentation, but it does not rerun a diarization step already executed by a version 2 worker.
 
@@ -62,22 +67,24 @@ Do not give a production worker a checkout of the ToolsAPI repository as a runti
 
 Responsibilities are split as follows:
 
-- ToolsAPI: business rules, authorization, storage, scheduling, retry policy, notification, persistence and presentation.
-- toolsApi-worker: generic worker protocol plus execution handlers, including the requested Whisper and pyannote execution on the worker host.
-- Shared contracts: versioned schemas describing requests, capabilities, progress and results.
+- ToolsAPI: business rules, authorization, storage, scheduling/priority, exact worker targeting, source staging, retry policy, notification, persistence and presentation.
+- toolsApi-worker: generic worker protocol plus execution handlers, including Whisper and pyannote execution on the worker host.
+- Shared contracts: versioned schemas describing requests, runtime telemetry, progress and results.
 
 When execution code is genuinely reusable across repositories, extract it into a versioned package/library with its own tests instead of importing application internals from ToolsAPI.
 
-ToolsAPI must not remotely instruct workers to install arbitrary packages or execute arbitrary code. Workers advertise installed handler versions and capabilities. ToolsAPI only assigns compatible jobs.
+ToolsAPI must not remotely instruct workers to install arbitrary packages or execute arbitrary code. Worker hardware telemetry may affect preference and capacity, but every current production `whisper.transcribe` worker must satisfy the same ordinary workload baseline before it joins the pool.
 
 ## Whisper workload
 
 The initial handler is `whisper.transcribe`. ToolsAPI keeps the canonical audio and transcript records; the worker performs transcription execution and, when requested, speaker diarization before returning structured data and runtime metadata.
 
-Execution is platform-specific behind the same worker lifecycle:
+Every production worker supports the common Tools model set `large`, `turbo`, `medium`, `small`, `base`, `tiny` and a working speaker-diarization runtime. Additional backend-specific models may be additive. A worker that cannot satisfy the common baseline fails before polling instead of becoming a reduced-capability scheduler class.
+
+Execution is platform-specific behind the same workload semantics and worker lifecycle:
 
 - Linux CPU/CUDA: `faster-whisper` plus pyannote.
 - Windows CPU/CUDA: `faster-whisper` plus pyannote, installed and launched through PowerShell tooling without requiring an interactive CMD session.
 - Apple Silicon macOS: `mlx-whisper` for transcription plus pyannote for speaker diarization.
 
-Backend selection never changes lease ownership, heartbeat, retry or terminal acknowledgement rules.
+Backend selection changes performance characteristics, not lease ownership, model/source semantics, diarization availability, retry or terminal acknowledgement rules.

@@ -42,7 +42,7 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   cp "${SOURCE_DIR}/.env.example" "${ENV_FILE}"
   sed -i '' \
     -e 's/^TOOLS_WORKER_ID=.*/TOOLS_WORKER_ID=macos-apple-silicon/' \
-    -e 's/^TOOLS_WORKER_WHISPER_MODELS=.*/TOOLS_WORKER_WHISPER_MODELS=large-v3,turbo/' \
+    -e 's/^TOOLS_WORKER_WHISPER_MODELS=.*/TOOLS_WORKER_WHISPER_MODELS=large,turbo,medium,small,base,tiny,large-v3/' \
     -e 's/^TOOLS_WORKER_WHISPER_DEVICE=.*/TOOLS_WORKER_WHISPER_DEVICE=metal/' \
     -e 's/^TOOLS_WORKER_WHISPER_COMPUTE_TYPE=.*/TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16/' \
     "${ENV_FILE}"

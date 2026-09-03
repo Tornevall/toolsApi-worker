@@ -46,18 +46,23 @@ All notable changes to toolsApi-worker are documented here.
 
 ### Changed
 
-- Clarified exact administrator-target claim semantics for ToolsAPI #1732 / worker #26: capability advertisement continues to govern automatic scheduling, while a job actually returned by a supported current claim policy is authoritative even when an exact target exceeds advertised model or diarization capability. URL input remains capability-safe: a worker without URL support is not forced to fetch the external URL; ToolsAPI may stage the URL-origin media and deliver it through the existing lease-bound `tools_media` path instead. Worker runtime code, wire schema, authentication, lease handling and capability advertisement remain unchanged.
+- Standardized the current production `whisper.transcribe` runtime across CPU, CUDA and Apple Silicon workers. Every live worker now has the common effective model set `large`, `turbo`, `medium`, `small`, `base`, `tiny`; legacy narrower `.env` model lists are preserved on disk but expanded in memory, while additional runtime-specific models remain additive.
+- Made a working speaker-diarization runtime part of the production Whisper worker startup contract. A worker with diarization disabled, missing dependencies/model access or an unavailable configured diarization device now fails before the first live claim instead of joining the pool with reduced semantics.
+- Stopped advertising raw external URL execution. The compatibility configuration name remains, but the runtime reports `accepts_url_sources=false` and expects ToolsAPI to stage URL-origin media into authenticated lease-bound `tools_media` for every remote worker.
+- Preserved administrator-selected exact worker semantics: ToolsAPI may stage media before the claim, but another worker must not execute a transcription explicitly targeted at a named worker. Companion server work is tracked by `Tornevall/toolsApi#1745`; this worker change is tracked by #29.
+- Updated fresh macOS installation to retain the MLX-specific `large-v3` option while also declaring the complete common Tools model baseline.
+- Clarified exact administrator-target claim semantics for ToolsAPI #1732 / worker #26: a returned current-contract exact-target claim remains authoritative, but current production workers are expected to satisfy the common runtime baseline rather than rely on per-host model/diarization feature subsets.
 - Documented that ToolsAPI may intentionally return the existing successful idle `job: null` response to CPU workers while a fresh accelerated worker is online when the administrator GPU-preference scheduling policy is enabled. The worker keeps polling normally; request schema, authentication, lease handling and runtime code are unchanged.
 - `whisper.transcribe` is now contract version 2 and requires ToolsAPI `claim_policy_version >= 2`, preventing older workers/servers from silently consuming diarization-required jobs.
 - Contract-version-2 claims now accept `operation=transcribe|diarize`; omitted operation remains compatible as `transcribe`, while unknown operations fail closed.
-- Speaker diarization is enabled by default in worker configuration, can be explicitly disabled with `TOOLS_WORKER_DIARIZATION_ENABLED=false`, and uses `pyannote/speaker-diarization-community-1`.
-- Diarization capability advertisement now verifies both the installed pyannote/PyTorch runtime and the configured execution device; an explicit CUDA or Apple GPU device is not advertised when PyTorch cannot use it.
+- Speaker diarization is enabled by default in worker configuration and is mandatory for a live `whisper.transcribe` service under the current common runtime contract.
+- Diarization capability advertisement now verifies both the installed pyannote/PyTorch runtime and the configured execution device; a worker does not begin live polling when that runtime is unavailable.
 - Explicit accelerator configuration is revalidated on every worker process start before the first claim, so preserved `.env` changes, driver/library changes, or CPU-only PyTorch/CTranslate2 builds cannot cause a worker to advertise and consume GPU work it cannot execute.
 - Pyannote `auto` device selection prefers CUDA, then Apple MPS, then CPU.
 - Fresh Ubuntu system installs now initialize Whisper to the fastest executable detected CTranslate2 backend (`cuda` with the best supported compute type, otherwise `cpu`) and initialize diarization independently to CUDA only after a successful PyTorch CUDA kernel probe; existing `.env` values are never rewritten on reinstall.
 - `make install` now uses the shared venv bootstrap helper so a repairable Debian/Ubuntu missing-`ensurepip` failure installs the required apt venv package automatically instead of stopping at the raw Python error.
 - Fresh Windows NVIDIA installs no longer hard-code `float16`. The installer queries CTranslate2's actual CUDA compute-type capability and selects the best supported worker type in priority order `float16`, `int8_float16`, `int8_float32`, then `float32`; Pascal GPUs such as GTX 1060 can therefore use `int8_float32` instead of being rejected by the old fp16-only preflight.
-- Existing Windows `.env` values remain authoritative. An explicitly configured CUDA compute type that the GPU does not support now fails with the exact supported-type list instead of being misreported as a missing CUDA installation.
+- Existing Windows `.env` values remain authoritative for credentials/device/compute settings. An explicitly configured CUDA compute type that the GPU does not support now fails with the exact supported-type list instead of being misreported as a missing CUDA installation.
 - Windows GPU diagnostics now distinguish NVIDIA driver visibility from the CUDA 12 cuBLAS/cuDNN 9 runtime required by current CTranslate2/faster-whisper. The maximum CUDA version printed by `nvidia-smi` is no longer treated as the worker runtime version.
 - Native Windows pyannote setup automatically uses the official PyTorch CUDA 12.6 wheel channel for Maxwell/Pascal/Volta architectures, while an explicit `-TorchIndexUrl` still overrides automatic selection. `torch` and `torchaudio` are upgraded together.
 - Native Windows installation now rejects Microsoft Store `WindowsApps` Python aliases, prefers the Python Launcher when available, installs the PyTorch audio stack before the worker extras, and includes `torchcodec` explicitly so pip failures identify the failing installation phase instead of mixing CPU/GPU resolver churn.
@@ -73,11 +78,11 @@ All notable changes to toolsApi-worker are documented here.
 - Corrected `.env.example` so it documents the canonical runtime configuration paths for Ubuntu, macOS and the Windows service.
 - Production Linux and Windows installation uses the `whisper` runtime extra with `faster-whisper>=1.2.1,<2`, `pyannote.audio>=4,<5` and PyTorch.
 - Production Linux, Windows and Apple Silicon diarization extras now declare the PyTorch audio stack explicitly with `torch>=2.8`, `torchaudio>=2.8` and `torchcodec>=0.7`, matching pyannote.audio 4.x resolver expectations.
-- Production Apple Silicon macOS installation uses the `whisper-mlx` runtime extra with `mlx-whisper`, `pyannote.audio>=4,<5` and PyTorch, and defaults to `device=metal`, `compute_type=float16`, and `large-v3,turbo` for Whisper.
+- Production Apple Silicon macOS installation uses the `whisper-mlx` runtime extra with `mlx-whisper`, `pyannote.audio>=4,<5` and PyTorch, and defaults to `device=metal`, `compute_type=float16`, the common model baseline plus `large-v3`.
 - The macOS launchd installer records an explicit runtime `PATH` containing the resolved ffmpeg directory plus standard Apple Silicon/Homebrew locations, so MLX Whisper can invoke the ffmpeg CLI when launched outside an interactive shell.
 - The default idle claim interval is 60 seconds; active-job heartbeat remains independently configured at 30 seconds by default.
 - `toolsapi-worker run` executes the live serial polling lifecycle.
-- URL-source execution remains disabled by default (`TOOLS_WORKER_ACCEPTS_URL_SOURCES=false`). Initial live execution is restricted to lease-bound Tools-hosted media.
+- Raw URL-source execution is disabled in the standalone runtime. Remote URL-origin jobs are expected as lease-bound Tools-hosted media after ToolsAPI staging.
 - Runtime concurrency is deliberately limited to `1` until parallel ownership/lifecycle handling has dedicated coverage.
 - Development version advanced from `0.1.1.dev0` to `0.1.2.dev0` for the Microsoft Store Python/native Windows service registration repair.
 
@@ -94,3 +99,4 @@ All notable changes to toolsApi-worker are documented here.
 - macOS launchd and Windows service startup do not source `.env` as executable shell code; the worker parses configuration data directly so credential values are not executed by a shell.
 - Worker client error messages do not include the configured bearer credential.
 - Workers refuse live claims from ToolsAPI deployments that do not advertise the current diarization-aware capability policy.
+- Raw external URL fetching stays outside the worker runtime; ToolsAPI provides lease-bound staged media instead.

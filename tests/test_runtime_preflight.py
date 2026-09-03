@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from toolsapi_worker.config import WorkerConfig
+from toolsapi_worker.config import COMMON_WHISPER_MODELS, WorkerConfig
 from toolsapi_worker.runtime import WorkerRuntime, validate_whisper_runtime_device
 
 
@@ -40,7 +40,7 @@ class WorkerRuntimePreflightTest(unittest.TestCase):
             poll_seconds=1,
             heartbeat_seconds=30,
             enabled_handlers=("whisper.transcribe",),
-            whisper_models=("small",),
+            whisper_models=COMMON_WHISPER_MODELS,
             whisper_device=whisper_device,
             whisper_compute_type=compute_type,
             accepts_url_sources=False,
@@ -100,15 +100,15 @@ class WorkerRuntimePreflightTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "synthetic CUDA preflight failure"):
                     runtime.run_forever()
 
-    def test_run_forever_rejects_unavailable_explicit_diarization_accelerator_before_claim(self):
+    def test_run_forever_rejects_any_unavailable_diarization_runtime_before_claim(self):
         with tempfile.TemporaryDirectory() as root:
             runtime = WorkerRuntime(
-                self.config(root, whisper_device="cpu", compute_type="int8", diarization_device="cuda"),
+                self.config(root, whisper_device="cpu", compute_type="int8", diarization_device="auto"),
                 client=NeverClaimClient(),
                 handler=object(),
                 diarizer=StaticDiarizer(False),
             )
-            with self.assertRaisesRegex(RuntimeError, "diarization accelerator is unavailable"):
+            with self.assertRaisesRegex(RuntimeError, "common Whisper worker runtime requires working speaker diarization"):
                 runtime.run_forever()
 
 

@@ -22,9 +22,9 @@ See [docs/architecture.md](docs/architecture.md) and [docs/contracts.md](docs/co
 
 `whisper.transcribe` contract version 2 has an executable serial worker lifecycle:
 
-1. Advertise supported contract/model/device capability plus whether the worker can run speaker diarization.
-2. Claim one automatically compatible job, or an authoritative administrator-forced exact-target job, and receive lease id + generation.
-3. Download lease-bound Tools-hosted media into a per-job temporary directory.
+1. Start only when the common Whisper model baseline and speaker-diarization runtime are available, then advertise the current contract and hardware/runtime telemetry.
+2. Claim one scheduled job, including an authoritative administrator-selected exact-target job, and receive lease id + generation.
+3. Download lease-bound Tools-hosted media into a per-job temporary directory. URL-origin sources are staged by ToolsAPI first and arrive through the same `tools_media` path.
 4. Run the configured Whisper backend.
 5. Report heartbeat independently from transcript production so a slow model load remains visibly alive.
 6. If the claim has `diarization_requested=true`, run pyannote speaker diarization on the worker while the same lease heartbeat stays active.
@@ -37,7 +37,11 @@ A diarization failure does not discard a successful transcript. The worker submi
 
 The initial executable runtime is deliberately serial (`TOOLS_WORKER_CONCURRENCY=1`). Parallel execution will be added only with dedicated ownership/lifecycle coverage.
 
-Live polling requires ToolsAPI to advertise `claim_policy_version >= 2`. If an older ToolsAPI deployment does not support the diarization-aware capability gate, the worker refuses to consume jobs. This makes deploy order safe. Capability advertisement controls normal automatic assignment, but a job actually returned by a supported current policy is authoritative. ToolsAPI may return an administrator-selected exact target across advertised model or diarization mismatches; the worker attempts the unchanged request and reports its normal retryable/terminal failure if the local runtime cannot execute it. Raw URL input is still only returned to workers that advertise URL support. For a URL-origin job targeting a worker without that support, ToolsAPI may download and verify the source itself and then return the staged binary through the normal lease-bound `tools_media` path.
+Live polling requires ToolsAPI to advertise `claim_policy_version >= 2`. If an older ToolsAPI deployment does not support the current diarization-aware policy, the worker refuses to consume jobs. Worker authentication, current contract version, lease ownership and terminal acknowledgement remain authoritative protocol boundaries.
+
+All production remote workers now provide the same ordinary Whisper workload semantics. CPU, NVIDIA CUDA and Apple Metal/MLX differ in execution speed and scheduler priority, not in which ordinary Tools Whisper model/source/diarization semantics they support. The required model baseline is `large`, `turbo`, `medium`, `small`, `base`, `tiny`. A host may add extra runtime-specific models, but an existing narrow `.env` does not narrow the effective common baseline after upgrade.
+
+Administrator-selected named workers remain exact scheduling constraints. ToolsAPI may perform neutral preparation such as URL media staging, but another worker must not execute a transcription targeted at that named worker. If the target is offline, the job waits for it until an administrator changes the target.
 
 ### Whisper and diarization backends
 
@@ -45,13 +49,13 @@ Linux and native Windows CPU/CUDA workers use `faster-whisper` through the `whis
 
 Apple Silicon macOS workers use `mlx-whisper` through the `whisper-mlx` package extra. The macOS installer configures `TOOLS_WORKER_WHISPER_DEVICE=metal`, which selects the MLX runtime and allows Whisper inference to use Apple Silicon acceleration. MLX model names are mapped to the corresponding `mlx-community` Whisper repositories.
 
-Speaker diarization uses `pyannote.audio` with `pyannote/speaker-diarization-community-1` on Linux, Windows and macOS. Diarization is enabled by default and can be disabled explicitly with `TOOLS_WORKER_DIARIZATION_ENABLED=false`. The pyannote device is independent from the Whisper backend: `TOOLS_WORKER_DIARIZATION_DEVICE=auto` prefers CUDA, then Apple MPS when available, then CPU.
+Speaker diarization uses `pyannote.audio` with `pyannote/speaker-diarization-community-1` on Linux, Windows and macOS. A live `whisper.transcribe` worker must keep diarization enabled and must pass its runtime preflight before the first claim poll. `TOOLS_WORKER_DIARIZATION_DEVICE=auto` prefers CUDA, then Apple MPS when available, then CPU.
 
 Python 3.10 or newer is the runtime on all supported platforms. Windows runs as a native Windows service and does not require WSL or an interactive CMD session. PowerShell is used only for installation and service administration; the long-running process is the Python polling runtime.
 
-### Initial input scope
+### Input scope
 
-`TOOLS_WORKER_ACCEPTS_URL_SOURCES=false` is the default and recommended initial setting. Live remote execution is therefore limited to Tools-hosted upload/staged media. URL-source jobs stay on the local ToolsAPI runner until remote URL fetching is explicitly hardened and enabled.
+The standalone runtime does not fetch arbitrary external job URLs. It always advertises `accepts_url_sources=false`. ToolsAPI owns URL-source validation and staging, then delegates the verified media through the normal authenticated lease-bound `tools_media` path. This is the same input contract used by CPU, CUDA and Apple Silicon workers.
 
 ## Local installation
 
@@ -110,7 +114,7 @@ On first install the macOS installer defaults Whisper to:
 
 ```text
 TOOLS_WORKER_ID=macos-apple-silicon
-TOOLS_WORKER_WHISPER_MODELS=large-v3,turbo
+TOOLS_WORKER_WHISPER_MODELS=large,turbo,medium,small,base,tiny,large-v3
 TOOLS_WORKER_WHISPER_DEVICE=metal
 TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16
 TOOLS_WORKER_DIARIZATION_ENABLED=true
@@ -174,13 +178,13 @@ Configure:
 
 On a fresh installation with native NVIDIA available, the installer selects `cuda` for Whisper and diarization, then asks CTranslate2 which compute types are actually supported by that GPU. It prefers `float16`, then `int8_float16`, then `int8_float32`, then `float32`. This means newer Tensor Core GPUs normally remain on `float16`, while Pascal GPUs such as a GTX 1060 can use `int8_float32` instead of being rejected by a hard-coded fp16 assumption.
 
-Existing `.env` values remain authoritative. Reinstall never silently rewrites an explicit compute type. If the configured type is not in CTranslate2's reported CUDA capability set, installation fails with the reported supported types so the operator can change `.env` deliberately.
+Existing `.env` values remain authoritative for credentials, device and compute type. Reinstall never silently rewrites an explicit compute type. If the configured type is not in CTranslate2's reported CUDA capability set, installation fails with the reported supported types so the operator can change `.env` deliberately. A legacy narrow `TOOLS_WORKER_WHISPER_MODELS` value is preserved on disk but expanded to the common model baseline by the runtime.
 
 The CUDA version printed by `nvidia-smi` is driver capability, not proof that the matching CUDA Toolkit/runtime is installed and not a requirement that every library use that CUDA major. Current CTranslate2/faster-whisper Windows GPU execution still requires CUDA 12 cuBLAS and cuDNN 9 DLLs visible to the service process. A newer NVIDIA driver can run the CUDA 12 worker runtime through NVIDIA driver backward compatibility.
 
 For pyannote, the installer also checks the GPU compute capability. Current PyTorch CUDA 13 wheels no longer cover Maxwell, Pascal or Volta, so those architectures automatically use the maintained CUDA 12.6 PyTorch wheel channel (`https://download.pytorch.org/whl/cu126`). Turing and newer GPUs keep the normal dependency unless an explicit index override is supplied. The installer upgrades `torch` and `torchaudio` together when a CUDA wheel channel is selected.
 
-The installer verifies both GPU paths before the service is installed. The faster-whisper probe requires CTranslate2 to see a CUDA device and validates the exact configured compute type. The diarization probe does more than check `torch.cuda.is_available()`: it executes and synchronizes a tiny CUDA tensor operation so a wheel that sees the driver but cannot execute kernels for the installed GPU architecture fails before the worker can claim work. The Python worker repeats its configured accelerator preflight on every process start before its first claim. An explicitly configured `cuda` device never silently falls back to CPU.
+The installer verifies both GPU paths before the service is installed. The faster-whisper probe requires CTranslate2 to see a CUDA device and validates the exact configured compute type. The diarization probe does more than check `torch.cuda.is_available()`: it executes and synchronizes a tiny CUDA tensor operation so a wheel that sees the driver but cannot execute kernels for the installed GPU architecture fails before the worker can claim work. The Python worker repeats its runtime preflight on every process start before its first claim. An incomplete Whisper or diarization runtime fails closed rather than joining the pool with reduced functionality.
 
 To override PyTorch wheel selection explicitly, rerun the installer with an official PyTorch CUDA wheel index appropriate for the host:
 
@@ -189,12 +193,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -TorchInd
 ```
 
 An explicit `-TorchIndexUrl` always wins over automatic architecture selection.
-
-To intentionally disable speaker diarization while keeping Whisper running:
-
-```text
-TOOLS_WORKER_DIARIZATION_ENABLED=false
-```
 
 Uninstall the Windows service and runtime while preserving `.env`:
 
@@ -220,7 +218,7 @@ sudo ./scripts/install.sh
 
 The installer creates a dedicated `toolsapi-worker` system user, installs the package into `/opt/toolsapi-worker/.venv`, creates `/opt/toolsapi-worker/.env` when missing, installs the systemd unit and enables it. On a fresh `.env`, it probes the installed runtime and selects CUDA only when CTranslate2 can actually execute on NVIDIA; otherwise Whisper defaults to CPU with the best available CPU compute type (normally `int8`). Diarization is detected independently and uses CUDA only after PyTorch successfully executes a CUDA tensor operation; otherwise it uses CPU. A server with no NVIDIA GPU is therefore a normal supported CPU worker and requires no special override.
 
-Existing project `.env` values are preserved on reinstall/deploy. Auto-detection initializes only a previously missing `.env`; it never silently rewrites a deliberately configured worker.
+Existing project `.env` values are preserved on reinstall/deploy. Auto-detection initializes only a previously missing `.env`; it never silently rewrites a deliberately configured worker. The effective model set is still expanded to the common production baseline at runtime.
 
 After configuring `/opt/toolsapi-worker/.env`:
 
@@ -243,7 +241,7 @@ TOOLS_WORKER_CONCURRENCY=1
 TOOLS_WORKER_POLL_SECONDS=60
 TOOLS_WORKER_HEARTBEAT_SECONDS=30
 TOOLS_WORKER_ENABLED_HANDLERS=whisper.transcribe
-TOOLS_WORKER_WHISPER_MODELS=small
+TOOLS_WORKER_WHISPER_MODELS=large,turbo,medium,small,base,tiny
 TOOLS_WORKER_WHISPER_DEVICE=cpu
 TOOLS_WORKER_WHISPER_COMPUTE_TYPE=int8
 TOOLS_WORKER_ACCEPTS_URL_SOURCES=false
@@ -260,13 +258,15 @@ TOOLS_WORKER_TEMP_ROOT=
 
 `TOOLS_WORKER_ID` is operator-selected. Give every worker a stable unique id such as `datacenter0-cpu-01`, `windows-gpu-01` or `macos-apple-silicon`; the dedicated ToolsAPI worker credential name must match that id exactly. The stable id is also what ToolsAPI can use for explicit admin routing and benchmark/test selection.
 
+`TOOLS_WORKER_WHISPER_MODELS` may include additional runtime-specific models, but the six common Tools models are always effective for a production worker. `TOOLS_WORKER_ACCEPTS_URL_SOURCES` is retained as a compatibility configuration name; this runtime intentionally advertises false because ToolsAPI stages URL-origin sources centrally.
+
 `TOOLS_WORKER_POLL_SECONDS` is only the idle/no-job and transient claim retry interval. Active-job liveness is independent and uses `TOOLS_WORKER_HEARTBEAT_SECONDS`, so a 60-second idle poll does not weaken a running lease's normal 30-second heartbeat.
 
-`TOOLS_WORKER_DIARIZATION_HF_TOKEN` is only used locally to acquire/access the pyannote model. The worker never submits its value to ToolsAPI. It may report only whether a token was present. `TOOLS_WORKER_DIARIZATION_MODEL_DIR` can point at an already available local Community-1 directory and avoids requiring the job payload to choose or install code.
+`TOOLS_WORKER_DIARIZATION_HF_TOKEN` is only used locally to acquire/access the pyannote model. The worker never submits its value to ToolsAPI. It may report only whether a token was present. `TOOLS_WORKER_DIARIZATION_MODEL_DIR` can point at an already available local Community-1 directory and avoids requiring the job payload to choose or install code. A live Whisper worker cannot disable diarization; doing so is treated as an invalid production runtime configuration.
 
 For a CUDA worker, set `TOOLS_WORKER_WHISPER_DEVICE=cuda` and a compute type supported by the actual CTranslate2 CUDA capability set. `float16` is appropriate for many newer GPUs; Pascal compute capability 6.1 uses `int8_float32` or `float32` instead. Native Windows CUDA requires CUDA 12 cuBLAS and cuDNN 9 for current CTranslate2/faster-whisper releases. Explicit CUDA configuration is revalidated at worker startup before any claim is attempted.
 
-For Apple Silicon, use `TOOLS_WORKER_WHISPER_DEVICE=metal` and `TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16`. The device value is advertised to ToolsAPI and selects the MLX Whisper backend locally. `TOOLS_WORKER_DIARIZATION_DEVICE=auto` prefers Apple MPS for pyannote when PyTorch reports it available and otherwise uses CPU. ToolsAPI remains the authority that decides whether a job is eligible.
+For Apple Silicon, use `TOOLS_WORKER_WHISPER_DEVICE=metal` and `TOOLS_WORKER_WHISPER_COMPUTE_TYPE=float16`. The device value is advertised to ToolsAPI and selects the MLX Whisper backend locally. `TOOLS_WORKER_DIARIZATION_DEVICE=auto` prefers Apple MPS for pyannote when PyTorch reports it available and otherwise uses CPU. ToolsAPI remains the authority for assignment and exact worker targeting.
 
 ## Development and tests
 
@@ -284,7 +284,7 @@ CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11
 
 `.github/workflows/deploy.yml` supports manual deployment through `workflow_dispatch`. Automatic deployment after a push to `main` is enabled only when repository/environment variable `WORKER_AUTODEPLOY` is `true`.
 
-Deploy the ToolsAPI diarization-aware contract/policy support before enabling/deploying this worker runtime. The worker contains an additional runtime guard and refuses live claims from an older ToolsAPI deployment.
+Deploy the corresponding ToolsAPI staging/exact-target contract changes before enabling/deploying this worker runtime. The worker contains protocol guards and refuses live claims from an older incompatible ToolsAPI deployment.
 
 ## Security
 
@@ -293,7 +293,7 @@ Deploy the ToolsAPI diarization-aware contract/policy support before enabling/de
 - Lease/generation validation for media, progress and terminal calls.
 - No lease/token embedded in media URLs.
 - No worker bearer token or Hugging Face token in raised API errors or terminal payloads.
-- No live URL-source fetching by default.
+- No live raw URL-source fetching in the standalone worker runtime.
 - Temporary media isolated per job.
 
 ## Agent/development rules
@@ -307,6 +307,8 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 ## Related work
 
 - `Tornevall/toolsApi#469` - Remote Whisper worker support
+- `Tornevall/toolsApi#1745` - Uniform remote Whisper prerequisites and exact-target staging
+- `Tornevall/toolsApi-worker#29` - Uniform Whisper worker runtime prerequisites
 - `Tornevall/toolsApi#710` - Capability/post-processing claim gate
 - `Tornevall/toolsApi#1585` - Enable diarization by default and require remote workers to execute it
 - `Tornevall/toolsApi-worker#5` - Executable Whisper runtime

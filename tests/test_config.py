@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from toolsapi_worker.config import WorkerConfig, read_env_file
+from toolsapi_worker.config import COMMON_WHISPER_MODELS, WorkerConfig, read_env_file
 
 
 class WorkerConfigTest(unittest.TestCase):
@@ -20,7 +20,7 @@ class WorkerConfigTest(unittest.TestCase):
             "TOOLS_WORKER_WHISPER_MODELS": "small,medium",
             "TOOLS_WORKER_WHISPER_DEVICE": "cpu",
             "TOOLS_WORKER_WHISPER_COMPUTE_TYPE": "int8",
-            "TOOLS_WORKER_ACCEPTS_URL_SOURCES": "false",
+            "TOOLS_WORKER_ACCEPTS_URL_SOURCES": "true",
             "TOOLS_WORKER_DIARIZATION_ENABLED": "true",
             "TOOLS_WORKER_DIARIZATION_HF_TOKEN": "hf_test_only",
             "TOOLS_WORKER_DIARIZATION_MIN_SPEAKERS": "2",
@@ -39,7 +39,7 @@ class WorkerConfigTest(unittest.TestCase):
         self.assertEqual(4.0, config.poll_seconds)
         self.assertEqual(25.0, config.heartbeat_seconds)
         self.assertEqual(("whisper.transcribe",), config.enabled_handlers)
-        self.assertEqual(("small", "medium"), config.whisper_models)
+        self.assertEqual(COMMON_WHISPER_MODELS, config.whisper_models)
         self.assertEqual("cpu", config.whisper_device)
         self.assertEqual("int8", config.whisper_compute_type)
         self.assertFalse(config.accepts_url_sources)
@@ -51,7 +51,7 @@ class WorkerConfigTest(unittest.TestCase):
         self.assertEqual("cpu", config.diarization_device)
         self.assertEqual("/tmp/toolsapi-worker-test", config.temp_root)
 
-    def test_default_idle_poll_and_diarization_are_enabled(self):
+    def test_default_idle_poll_and_common_whisper_runtime_are_enabled(self):
         env = {
             "TOOLS_API_BASE_URL": "https://tools.example.test",
             "TOOLS_WORKER_TOKEN": "worker-secret",
@@ -62,12 +62,14 @@ class WorkerConfigTest(unittest.TestCase):
 
         self.assertEqual(60.0, config.poll_seconds)
         self.assertEqual(30.0, config.heartbeat_seconds)
+        self.assertEqual(COMMON_WHISPER_MODELS, config.whisper_models)
+        self.assertFalse(config.accepts_url_sources)
         self.assertTrue(config.diarization_enabled)
         self.assertEqual("pyannote/speaker-diarization-community-1", config.diarization_model)
         self.assertEqual("auto", config.diarization_device)
         self.assertTrue(config.temp_root.endswith("toolsapi-worker"))
 
-    def test_env_file_is_parsed_without_shell_evaluation(self):
+    def test_env_file_is_parsed_without_shell_evaluation_and_keeps_extra_models(self):
         with tempfile.TemporaryDirectory() as root:
             env_file = Path(root) / ".env"
             env_file.write_text(
@@ -85,7 +87,7 @@ class WorkerConfigTest(unittest.TestCase):
         self.assertEqual("12|token$with;separators", config.worker_token)
         self.assertEqual("mac worker", config.worker_id)
         self.assertEqual("metal", config.whisper_device)
-        self.assertEqual(("large-v3", "turbo"), config.whisper_models)
+        self.assertEqual(COMMON_WHISPER_MODELS + ("large-v3",), config.whisper_models)
         self.assertTrue(config.diarization_enabled)
 
     def test_env_file_accepts_windows_powershell_utf8_bom(self):
@@ -143,6 +145,46 @@ class WorkerConfigTest(unittest.TestCase):
             config = WorkerConfig.from_environment()
 
         with self.assertRaises(ValueError):
+            config.validate_protocol_configuration()
+
+    def test_whisper_runtime_cannot_disable_diarization(self):
+        env = {
+            "TOOLS_API_BASE_URL": "https://tools.example.test",
+            "TOOLS_WORKER_TOKEN": "worker-secret",
+            "TOOLS_WORKER_ID": "worker-01",
+            "TOOLS_WORKER_DIARIZATION_ENABLED": "false",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = WorkerConfig.from_environment()
+
+        with self.assertRaisesRegex(ValueError, "must keep speaker diarization enabled"):
+            config.validate_protocol_configuration()
+
+    def test_direct_config_cannot_narrow_the_common_model_set(self):
+        config = WorkerConfig(
+            api_base_url="https://tools.example.test",
+            worker_token="worker-secret",
+            worker_id="worker-01",
+            concurrency=1,
+            poll_seconds=60,
+            heartbeat_seconds=30,
+            enabled_handlers=("whisper.transcribe",),
+            whisper_models=("small",),
+            whisper_device="cpu",
+            whisper_compute_type="int8",
+            accepts_url_sources=False,
+            diarization_enabled=True,
+            diarization_provider="pyannote",
+            diarization_hf_token="",
+            diarization_model="pyannote/speaker-diarization-community-1",
+            diarization_model_dir="",
+            diarization_min_speakers=None,
+            diarization_max_speakers=None,
+            diarization_device="auto",
+            temp_root="/tmp/toolsapi-worker-test",
+        )
+
+        with self.assertRaisesRegex(ValueError, "common model set"):
             config.validate_protocol_configuration()
 
     def test_invalid_speaker_bounds_are_rejected(self):

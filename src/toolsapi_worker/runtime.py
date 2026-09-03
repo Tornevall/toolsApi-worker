@@ -338,12 +338,12 @@ class WorkerRuntime:
     def run_forever(self) -> None:
         self.config.validate_protocol_configuration()
         validate_whisper_runtime_device(self.config)
-        if (
-            self.config.diarization_enabled
-            and self.config.diarization_device in {"cuda", "mps", "metal"}
-            and not bool(getattr(self.diarizer, "supported", False))
+        if "whisper.transcribe" in self.config.enabled_handlers and not bool(
+            getattr(self.diarizer, "supported", False)
         ):
-            raise RuntimeError("Configured speaker diarization accelerator is unavailable on this worker.")
+            raise RuntimeError(
+                "The common Whisper worker runtime requires working speaker diarization before live claims start."
+            )
 
         while True:
             try:
