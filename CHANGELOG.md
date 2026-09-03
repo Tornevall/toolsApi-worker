@@ -46,6 +46,8 @@ All notable changes to toolsApi-worker are documented here.
 
 ### Changed
 
+- Production deployment now runs for every push to `main` as well as manual dispatch, so merged worker runtime fixes cannot remain undeployed behind a default-off repository variable.
+- Generated `build/` output is no longer tracked as runtime source material. The stale generated copy that still honored narrow `TOOLS_WORKER_WHISPER_MODELS` values was removed, leaving `src/toolsapi_worker` as the canonical implementation.
 - Standardized the current production `whisper.transcribe` runtime across CPU, CUDA and Apple Silicon workers. Every live worker now has the common effective model set `large`, `turbo`, `medium`, `small`, `base`, `tiny`; legacy narrower `.env` model lists are preserved on disk but expanded in memory, while additional runtime-specific models remain additive.
 - Made a working speaker-diarization runtime part of the production Whisper worker startup contract. A worker with diarization disabled, missing dependencies/model access or an unavailable configured diarization device now fails before the first live claim instead of joining the pool with reduced semantics.
 - Stopped advertising raw external URL execution. The compatibility configuration name remains, but the runtime reports `accepts_url_sources=false` and expects ToolsAPI to stage URL-origin media into authenticated lease-bound `tools_media` for every remote worker.

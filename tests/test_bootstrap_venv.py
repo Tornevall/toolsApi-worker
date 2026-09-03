@@ -1,4 +1,5 @@
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -14,6 +15,61 @@ class BootstrapVenvTest(unittest.TestCase):
     def _write_executable(self, path: Path, content: str) -> None:
         path.write_text(textwrap.dedent(content), encoding="utf-8")
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+    def _run_bootstrap(
+        self,
+        fake_bin: Path,
+        target: Path,
+        marker: Path,
+        apt_log: Path,
+    ) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+
+        if os.name == "nt":
+            bash = shutil.which("bash")
+            self.assertIsNotNone(bash, "Git Bash is required for bootstrap-venv shell tests on Windows")
+
+            env["TOOLS_TEST_FAKE_BIN"] = str(fake_bin)
+            env["TOOLS_TEST_VENV_MARKER"] = str(marker)
+            env["TOOLS_TEST_APT_LOG"] = str(apt_log)
+
+            return subprocess.run(
+                [
+                    bash,
+                    "-c",
+                    r'''
+                    set -e
+                    fake_bin="$(cygpath -u "$TOOLS_TEST_FAKE_BIN")"
+                    marker="$(cygpath -u "$TOOLS_TEST_VENV_MARKER")"
+                    apt_log="$(cygpath -u "$TOOLS_TEST_APT_LOG")"
+                    script="$(cygpath -u "$1")"
+                    target="$(cygpath -u "$2")"
+                    export PATH="${fake_bin}:$PATH"
+                    export TOOLS_TEST_VENV_MARKER="${marker}"
+                    export TOOLS_TEST_APT_LOG="${apt_log}"
+                    exec bash "${script}" fakepython "${target}"
+                    ''',
+                    "bootstrap-venv-test",
+                    str(SCRIPT),
+                    str(target),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        env["TOOLS_TEST_VENV_MARKER"] = str(marker)
+        env["TOOLS_TEST_APT_LOG"] = str(apt_log)
+
+        return subprocess.run(
+            ["bash", str(SCRIPT), "fakepython", str(target)],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
     def test_missing_ensurepip_installs_venv_package_and_retries(self):
         with tempfile.TemporaryDirectory() as root:
@@ -45,6 +101,16 @@ class BootstrapVenvTest(unittest.TestCase):
                 ''',
             )
             self._write_executable(
+                fake_bin / "uname",
+                r'''#!/usr/bin/env bash
+                if [[ "${1:-}" == "-s" ]]; then
+                  echo "Linux"
+                  exit 0
+                fi
+                echo "Linux"
+                ''',
+            )
+            self._write_executable(
                 fake_bin / "apt-get",
                 r'''#!/usr/bin/env bash
                 echo "$*" >> "$TOOLS_TEST_APT_LOG"
@@ -61,18 +127,7 @@ class BootstrapVenvTest(unittest.TestCase):
                 ''',
             )
 
-            env = os.environ.copy()
-            env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
-            env["TOOLS_TEST_VENV_MARKER"] = str(marker)
-            env["TOOLS_TEST_APT_LOG"] = str(apt_log)
-
-            completed = subprocess.run(
-                ["bash", str(SCRIPT), "fakepython", str(target)],
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            completed = self._run_bootstrap(fake_bin, target, marker, apt_log)
 
             self.assertEqual(0, completed.returncode, completed.stderr)
             self.assertTrue(marker.exists())
@@ -86,6 +141,7 @@ class BootstrapVenvTest(unittest.TestCase):
             root_path = Path(root)
             fake_bin = root_path / "bin"
             fake_bin.mkdir()
+            marker = root_path / "unused-marker"
             apt_log = root_path / "apt.log"
 
             self._write_executable(
@@ -106,17 +162,7 @@ class BootstrapVenvTest(unittest.TestCase):
                 ''',
             )
 
-            env = os.environ.copy()
-            env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
-            env["TOOLS_TEST_APT_LOG"] = str(apt_log)
-
-            completed = subprocess.run(
-                ["bash", str(SCRIPT), "fakepython", str(root_path / "venv")],
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            completed = self._run_bootstrap(fake_bin, root_path / "venv", marker, apt_log)
 
             self.assertNotEqual(0, completed.returncode)
             self.assertIn("permission denied", completed.stderr)

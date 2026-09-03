@@ -282,7 +282,7 @@ CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11
 
 ## Deployment
 
-`.github/workflows/deploy.yml` supports manual deployment through `workflow_dispatch`. Automatic deployment after a push to `main` is enabled only when repository/environment variable `WORKER_AUTODEPLOY` is `true`.
+Every push to `main` runs `.github/workflows/deploy.yml` against the production environment and deploys the exact triggering commit. `workflow_dispatch` remains available for an explicit manual redeploy or recovery run. A merged runtime fix is therefore not left behind a default-off repository variable.
 
 Deploy the corresponding ToolsAPI staging/exact-target contract changes before enabling/deploying this worker runtime. The worker contains protocol guards and refuses live claims from an older incompatible ToolsAPI deployment.
 
