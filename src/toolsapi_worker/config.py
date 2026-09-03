@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+COMMON_WHISPER_MODELS = ("large", "turbo", "medium", "small", "base", "tiny")
 
 
 def read_env_file(path: str | Path) -> dict[str, str]:
@@ -43,6 +44,16 @@ def _optional_positive_int(value: str) -> int | None:
 
 def _truthy(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _whisper_models(value: str) -> tuple[str, ...]:
+    configured = tuple(
+        model.strip().lower()
+        for model in value.split(",")
+        if model.strip()
+    )
+    extras = tuple(model for model in configured if model not in COMMON_WHISPER_MODELS)
+    return COMMON_WHISPER_MODELS + tuple(dict.fromkeys(extras))
 
 
 @dataclass(frozen=True)
@@ -91,12 +102,7 @@ class WorkerConfig:
             for handler in env("TOOLS_WORKER_ENABLED_HANDLERS", "whisper.transcribe").split(",")
             if handler.strip()
         )
-        models = tuple(
-            model.strip().lower()
-            for model in env("TOOLS_WORKER_WHISPER_MODELS", "small").split(",")
-            if model.strip()
-        )
-        accepts_url_sources = _truthy(env("TOOLS_WORKER_ACCEPTS_URL_SOURCES", "false"))
+        models = _whisper_models(env("TOOLS_WORKER_WHISPER_MODELS", ",".join(COMMON_WHISPER_MODELS)))
         diarization_enabled = _truthy(env("TOOLS_WORKER_DIARIZATION_ENABLED", "true"))
         temp_root_default = str(Path(tempfile.gettempdir()) / "toolsapi-worker")
 
@@ -111,7 +117,10 @@ class WorkerConfig:
             whisper_models=models,
             whisper_device=env("TOOLS_WORKER_WHISPER_DEVICE", "cpu").strip().lower() or "cpu",
             whisper_compute_type=env("TOOLS_WORKER_WHISPER_COMPUTE_TYPE", "int8").strip() or "int8",
-            accepts_url_sources=accepts_url_sources,
+            # Remote URL-origin jobs use ToolsAPI-staged, lease-bound media on every worker.
+            # Keep the field in the wire contract for compatibility, but never advertise a
+            # raw-URL execution capability that this runtime does not implement.
+            accepts_url_sources=False,
             diarization_enabled=diarization_enabled,
             diarization_provider=env("TOOLS_WORKER_DIARIZATION_PROVIDER", "pyannote").strip().lower() or "pyannote",
             diarization_hf_token=env("TOOLS_WORKER_DIARIZATION_HF_TOKEN").strip(),
@@ -137,8 +146,20 @@ class WorkerConfig:
         if missing:
             raise ValueError("Missing worker configuration: " + ", ".join(missing))
 
-        if "whisper.transcribe" in self.enabled_handlers and not self.whisper_models:
-            raise ValueError("TOOLS_WORKER_WHISPER_MODELS must contain at least one model")
+        if "whisper.transcribe" in self.enabled_handlers:
+            missing_models = [model for model in COMMON_WHISPER_MODELS if model not in self.whisper_models]
+            if missing_models:
+                raise ValueError(
+                    "Whisper workers must provide the common model set: " + ", ".join(COMMON_WHISPER_MODELS)
+                )
+            if not self.diarization_enabled:
+                raise ValueError(
+                    "Whisper workers must keep speaker diarization enabled under the common runtime contract"
+                )
+            if self.accepts_url_sources:
+                raise ValueError(
+                    "Whisper workers must consume ToolsAPI-staged media instead of raw URL-source claims"
+                )
 
         if self.concurrency != 1:
             raise ValueError("TOOLS_WORKER_CONCURRENCY must remain 1 until parallel runtime support is implemented")
