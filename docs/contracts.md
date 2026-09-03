@@ -4,28 +4,30 @@ Worker contracts are versioned independently from deployment hostnames. API rout
 
 ## Capability advertisement
 
-The live `whisper.transcribe` claim request advertises the worker execution capability that ToolsAPI may assign against:
+The live `whisper.transcribe` claim request advertises the worker runtime state:
 
 ```json
 {
   "contract_version": 2,
-  "models": ["small", "medium"],
+  "models": ["large", "turbo", "medium", "small", "base", "tiny"],
   "device": "cuda",
-  "compute_type": "float16",
+  "compute_type": "int8_float32",
   "accepts_url_sources": false,
   "supports_diarization": true
 }
 ```
 
-For automatic scheduling, ToolsAPI leaves incompatible jobs queued rather than mutating them. A normal automatically selected job with `diarization_requested=true` is assigned only to a version 2 worker that advertises `supports_diarization=true`. Diarization-only work is also restricted to workers that truthfully advertise this capability. An administrator-selected exact remote target is different: after worker authentication and current-contract validation, ToolsAPI may intentionally return that exact transcription job across advertised model or diarization mismatches. Raw external URL input is not forced through a URL-capability mismatch. When the selected remote path does not advertise URL support, ToolsAPI may first stage the URL-origin source and then return it as lease-bound `tools_media`. This does not change what the worker advertises or the claim schema. The returned claim is authoritative and the worker attempts its unchanged transcription requirements; a locally unsupported requirement is reported through the ordinary failure path.
+All supported production workers use the same ordinary Whisper workload baseline. The required model set is `large`, `turbo`, `medium`, `small`, `base`, `tiny`, and a live worker must have working speaker diarization before it starts polling. CPU, CUDA and Metal/MLX remain meaningful device/performance signals, but they do not define different ordinary job feature classes.
 
-The current worker runtime defaults to `accepts_url_sources=false`, so live execution is restricted to Tools-hosted upload/staged media while URL fetching remains outside the worker runtime.
+Host configuration may add runtime-specific models such as an MLX-specific model name, but it cannot remove models from the common baseline. Existing narrower `.env` values are upgraded in memory to the common set so a software upgrade does not leave an otherwise healthy worker permanently unable to see ordinary work.
 
-A successful claim response must include `claim_policy_version >= 2`. Workers enabling live polling refuse claims from older ToolsAPI deployments that do not advertise the diarization-aware capability gate. This protects deployment order: an old server cannot assign a requested diarization job to a worker without checking capability.
+Raw external URL fetching is not part of the standalone worker runtime. Workers advertise `accepts_url_sources=false`; ToolsAPI stages and verifies URL-origin media and returns it through the same lease-bound `tools_media` descriptor used for uploaded or retained media. This keeps source acquisition, URL verification and media ownership on ToolsAPI and gives every worker the same input contract.
+
+A successful claim response must include `claim_policy_version >= 2`. Workers enabling live polling refuse claims from older ToolsAPI deployments that do not advertise the current diarization-aware policy. Worker authentication, current contract version, lease/generation ownership and source-media integrity remain hard protocol boundaries.
 
 The `device` and `compute_type` values describe the installed Whisper backend. CPU/CUDA values select `faster-whisper`; Apple Silicon workers advertise a Metal/MLX device value and use `mlx-whisper`. Speaker diarization remains pyannote-based on all supported platforms and has its own device selection.
 
-On Windows, `device=cuda` means native Windows CUDA. WSL is not part of the worker runtime. A fresh NVIDIA installation derives the advertised compute type from CTranslate2's actual capability set instead of assuming fp16; Pascal-class GPUs may therefore advertise `int8_float32` while newer GPUs can advertise `float16`. Existing explicit `.env` values are preserved and rejected clearly if unsupported. When diarization is configured for CUDA, the worker must prove that PyTorch can execute and synchronize a real CUDA tensor operation before advertising diarization support or polling for live work.
+On Windows, `device=cuda` means native Windows CUDA. WSL is not part of the worker runtime. A fresh NVIDIA installation derives the advertised compute type from CTranslate2's actual capability set instead of assuming fp16; Pascal-class GPUs may therefore advertise `int8_float32` while newer GPUs can advertise `float16`. Existing explicit device/compute `.env` values are preserved and rejected clearly if unsupported. The worker must also prove that PyTorch/pyannote is executable before it may start live polling.
 
 ## Whisper claim
 
@@ -33,9 +35,11 @@ Workers authenticate with a dedicated bearer credential and stable worker id, th
 
 `POST /api/whisper/worker/claim`
 
-A successful claim may contain a job or the existing idle result `job: null`. A null job is not an error and the worker must continue its normal poll loop. A returned job from a supported current claim policy is authoritative. The worker does not re-run ToolsAPI's scheduler decision against its own advertised model/diarization capability set: if an exact administrator target requests an unsupported configured model or unavailable diarization, the normal runtime attempt fails explicitly and is submitted through the existing retryable/terminal failure path instead of silently discarding the claim. URL execution remains explicit: raw URL claims are only valid when URL support is advertised; otherwise ToolsAPI can stage the URL-origin media and return `tools_media`, which the worker downloads through its authenticated lease. Lease ownership and terminal acknowledgement rules are unchanged.
+A successful claim may contain a job or the existing idle result `job: null`. A null job is not an error and the worker must continue its normal poll loop.
 
-ToolsAPI may deliberately return `job: null` because of administrator scheduling policy even when queued work exists. In particular, when the server-side `If GPU:s are available, do not delegate to CPU-workers` policy is enabled, a worker advertising `device=cpu` receives no new job while another configured fresh accelerated worker is online. CUDA/GPU/NVIDIA/ROCm/HIP and Apple Metal/MLX/MPS advertisements are treated as accelerated by the current ToolsAPI policy. Once that presence expires, CPU assignment resumes automatically. This policy does not alter the request schema, authentication, lease semantics or worker-side retry behavior.
+ToolsAPI may deliberately return `job: null` because of administrator scheduling policy even when queued work exists. In particular, a CPU worker may be deferred while a fresh accelerated worker is available. This is a priority/capacity choice, not a different workload-capability contract.
+
+An administrator-selected named remote worker is an exact scheduling constraint. ToolsAPI may do neutral preparation before the selected worker claims the job, including downloading and staging URL-origin media, but another worker or the local runner must not execute the transcription. An offline exact target therefore remains queued until that worker returns or an administrator changes the target.
 
 A claim containing work includes the current lease/generation, an explicit operation and an input descriptor:
 
@@ -48,7 +52,7 @@ A claim containing work includes the current lease/generation, an explicit opera
   "generation": 2,
   "lease_expires_at": "2026-09-01T13:45:00+00:00",
   "operation": "transcribe",
-  "model": "small",
+  "model": "medium",
   "language": "sv",
   "diarization_requested": true,
   "input": {
@@ -65,7 +69,7 @@ Supported operations are:
 
 If `operation` is omitted, workers treat the claim as `transcribe` for compatibility with earlier contract-version-2 responses. Unknown operations are rejected.
 
-`input.type` remains `tools_media` or `url` at contract level. Live worker execution currently accepts `tools_media` only. URL-source jobs are not remotely assigned unless a worker explicitly advertises URL support.
+The wire parser still recognizes the historical `url` descriptor for compatibility, but the production runtime does not execute it. Current ToolsAPI remote scheduling must stage URL-origin media first and issue `tools_media`.
 
 ## Lease-bound media
 
@@ -126,7 +130,7 @@ The worker host itself is a continuously running service/daemon around this poll
   "runtime": {
     "engine": "faster-whisper",
     "device": "cuda",
-    "compute_type": "float16"
+    "compute_type": "int8_float32"
   },
   "diarization": {
     "requested": true,
@@ -209,4 +213,4 @@ Python 3.10 or newer is required on every supported platform. Windows service in
 
 ## Compatibility
 
-Contract version 2 adds explicit diarization capability, structured diarization result data and the `operation` discriminator used for transcript versus diarization-only work. Version 1 workers must not claim version 2 jobs. Existing API route paths remain unchanged and unversioned.
+Contract version 2 remains the current wire contract and existing API route paths remain unchanged and unversioned. The uniform-worker change tightens production runtime prerequisites and remote source staging without adding a new URL or route namespace. Version 1 workers must not claim version 2 jobs.
