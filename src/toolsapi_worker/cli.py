@@ -1,9 +1,60 @@
 import argparse
 import sys
+from contextlib import contextmanager
+from datetime import datetime
+from typing import Callable, TextIO
 
 from . import __version__
 from .config import WorkerConfig
 from .runtime import WorkerRuntime
+
+
+def _local_timestamp() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+class TimestampedTextStream:
+    def __init__(self, stream: TextIO, timestamp_factory: Callable[[], str] | None = None) -> None:
+        self._stream = stream
+        self._timestamp_factory = timestamp_factory or _local_timestamp
+        self._line_start = True
+
+    def write(self, text: str) -> int:
+        if not text:
+            return 0
+
+        for part in text.splitlines(keepends=True):
+            is_blank_line = part in {"\n", "\r", "\r\n"}
+            if self._line_start and not is_blank_line:
+                self._stream.write(f"[{self._timestamp_factory()}] ")
+
+            self._stream.write(part)
+            self._line_start = part.endswith(("\n", "\r"))
+
+        return len(text)
+
+    def flush(self) -> None:
+        self._stream.flush()
+
+    def __getattr__(self, name: str):
+        return getattr(self._stream, name)
+
+
+@contextmanager
+def _timestamp_runtime_streams():
+    stdout = sys.stdout
+    stderr = sys.stderr
+    wrapped_stdout = TimestampedTextStream(stdout)
+    wrapped_stderr = TimestampedTextStream(stderr)
+    sys.stdout = wrapped_stdout
+    sys.stderr = wrapped_stderr
+    try:
+        yield
+    finally:
+        wrapped_stdout.flush()
+        wrapped_stderr.flush()
+        sys.stdout = stdout
+        sys.stderr = stderr
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,15 +92,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "run":
-        try:
-            config = load_config(args.env_file)
-            config.validate_protocol_configuration()
-            WorkerRuntime(config).run_forever()
-        except KeyboardInterrupt:
-            return 0
-        except Exception as exc:
-            print(f"toolsapi-worker: {exc}", file=sys.stderr)
-            return 2
+        with _timestamp_runtime_streams():
+            try:
+                config = load_config(args.env_file)
+                config.validate_protocol_configuration()
+                WorkerRuntime(config).run_forever()
+            except KeyboardInterrupt:
+                return 0
+            except Exception as exc:
+                print(f"toolsapi-worker: {exc}", file=sys.stderr)
+                return 2
         return 0
 
     parser.print_help()
