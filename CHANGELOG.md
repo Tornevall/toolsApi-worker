@@ -46,6 +46,7 @@ All notable changes to toolsApi-worker are documented here.
 
 ### Changed
 
+- Windows CI now runs the Debian/Ubuntu `bootstrap-venv.sh` regression fixtures through Git Bash with normalized MSYS paths, explicit Linux-platform emulation and Bash `PATH` semantics so missing-`ensurepip` recovery and unrelated stderr failures are verified consistently on Windows.
 - Standardized the current production `whisper.transcribe` runtime across CPU, CUDA and Apple Silicon workers. Every live worker now has the common effective model set `large`, `turbo`, `medium`, `small`, `base`, `tiny`; legacy narrower `.env` model lists are preserved on disk but expanded in memory, while additional runtime-specific models remain additive.
 - Made a working speaker-diarization runtime part of the production Whisper worker startup contract. A worker with diarization disabled, missing dependencies/model access or an unavailable configured diarization device now fails before the first live claim instead of joining the pool with reduced semantics.
 - Stopped advertising raw external URL execution. The compatibility configuration name remains, but the runtime reports `accepts_url_sources=false` and expects ToolsAPI to stage URL-origin media into authenticated lease-bound `tools_media` for every remote worker.
