@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from toolsapi_worker.cli import main
+from toolsapi_worker.config import COMMON_WHISPER_MODELS
 
 
 class CliTests(unittest.TestCase):
@@ -16,7 +17,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("installed, credentials pending", output.getvalue())
         self.assertIn("device=cpu", output.getvalue())
-        self.assertIn("models=small", output.getvalue())
+        self.assertIn("models=" + ",".join(COMMON_WHISPER_MODELS), output.getvalue())
 
     def test_status_loads_env_file_without_shell_evaluation(self):
         output = io.StringIO()
@@ -36,7 +37,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("configured", output.getvalue())
         self.assertIn("device=metal", output.getvalue())
-        self.assertIn("models=large-v3,turbo", output.getvalue())
+        self.assertIn("models=" + ",".join(COMMON_WHISPER_MODELS + ("large-v3",)), output.getvalue())
 
     def test_no_command_prints_help(self):
         output = io.StringIO()
