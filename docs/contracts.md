@@ -118,6 +118,8 @@ Live transcript fields are progress evidence, not terminal state. ToolsAPI may u
 
 The production runtime reports heartbeat independently of transcript production and diarization progress. Slow Whisper or pyannote model loading can therefore keep the lease alive even while visible progress is unchanged. An accepted update refreshes the lease and the shared Whisper runtime heartbeat used by web/mobile polling.
 
+A transient heartbeat/progress transport failure does not grant or extend ownership locally. After a retryable worker API error, the runtime resubmits the current snapshot on a shorter bounded cadence, by default no slower than one third of the normal heartbeat interval and capped at five seconds, until ToolsAPI accepts an update or definitively rejects the lease. HTTP `409` remains terminal lease loss. Only an accepted ToolsAPI report refreshes the authoritative lease expiry.
+
 The same independent heartbeat remains active while a terminal completion, failure, or diarization result is awaiting acknowledgement or retry. The worker stops it only after ToolsAPI accepts terminal state or definitively rejects the lease, so a transient terminal HTTP/network failure cannot create a lease-expiry gap after expensive processing has finished.
 
 The worker host itself is a continuously running service/daemon around this poll loop. Windows uses a native Windows service, Linux uses systemd and macOS uses launchd. Task Scheduler is not the worker execution model.
