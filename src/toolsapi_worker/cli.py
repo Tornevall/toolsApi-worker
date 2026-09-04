@@ -100,6 +100,8 @@ def _print_diarization_report(report: dict[str, object]) -> None:
         "hf_token_present",
         "configured_device",
         "resolved_device",
+        "min_speakers",
+        "max_speakers",
         "supported",
         "pipeline_loaded",
         "audio_checked",
