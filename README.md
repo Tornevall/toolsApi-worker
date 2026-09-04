@@ -33,6 +33,8 @@ See [docs/architecture.md](docs/architecture.md) and [docs/contracts.md](docs/co
 9. Retry the exact same terminal submission after transient API failures until ToolsAPI acknowledges it or rejects the lease.
 10. Remove local temporary media after the ownership lifecycle ends.
 
+While Whisper is running, workers publish bounded cumulative live transcript text and timestamped segments through the existing progress endpoint. `faster-whisper` publishes from its segment iterator; Apple Silicon MLX captures `mlx-whisper`'s incremental timestamp output without writing transcript content to local worker logs. ToolsAPI can therefore show real transcript evidence and derive progress from the latest completed audio timestamp before terminal completion.
+
 A diarization failure does not discard a successful transcript. The worker submits the transcript together with a separate `failed` or `unavailable` diarization status so ToolsAPI can preserve the text and show the speaker-processing failure independently.
 
 The initial executable runtime is deliberately serial (`TOOLS_WORKER_CONCURRENCY=1`). Parallel execution will be added only with dedicated ownership/lifecycle coverage.
@@ -257,6 +259,8 @@ TOOLS_WORKER_TEMP_ROOT=
 ```
 
 The heartbeat is independent from Whisper/pyannote progress and remains active through terminal acknowledgement and transient terminal retries. A worker stops refreshing the lease only after ToolsAPI accepts completion/failure or definitively rejects ownership, preventing a finished job from losing its lease while the final API response is unresolved.
+
+Live transcript snapshots are additive progress data, not terminal state. They are bounded and sent only from the current lease while new segment evidence is produced; the final `/complete` payload remains authoritative.
 
 `TOOLS_WORKER_ID` is operator-selected. Give every worker a stable unique id such as `datacenter0-cpu-01`, `windows-gpu-01` or `macos-apple-silicon`; the dedicated ToolsAPI worker credential name must match that id exactly. The stable id is also what ToolsAPI can use for explicit admin routing and benchmark/test selection.
 
