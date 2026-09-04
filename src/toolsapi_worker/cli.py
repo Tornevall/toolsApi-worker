@@ -132,8 +132,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "diagnose":
         if args.diagnostic != "diarization":
-            diagnose_parser = parser._subparsers._group_actions[0].choices["diagnose"]
-            diagnose_parser.print_help()
+            parser.print_help()
             return 0
 
         try:
