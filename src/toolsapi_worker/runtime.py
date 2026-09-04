@@ -4,7 +4,8 @@ import shutil
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from contextlib import redirect_stdout
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -17,6 +18,7 @@ from .api import (
 )
 from .config import WorkerConfig
 from .diarization import PyannoteDiarizer
+from .live_progress import MlxVerboseTranscriptCapture
 
 
 @dataclass
@@ -24,6 +26,8 @@ class HeartbeatState:
     progress_percent: int = 1
     stage_label: str = "Remote worker"
     stage_detail: str = "Preparing Whisper job."
+    transcript_text: str = ""
+    transcript_segments: list[dict[str, Any]] = field(default_factory=list)
 
 
 class LeaseHeartbeat:
@@ -39,6 +43,7 @@ class LeaseHeartbeat:
         self.state = HeartbeatState()
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._lease_lost = threading.Event()
         self._last_error: WorkerApiError | None = None
         self._thread = threading.Thread(target=self._run, name=f"whisper-heartbeat-{claim.job_id}", daemon=True)
@@ -51,6 +56,15 @@ class LeaseHeartbeat:
             self.state.progress_percent = max(1, min(99, int(progress_percent)))
             self.state.stage_label = stage_label
             self.state.stage_detail = stage_detail
+        self._wake.set()
+
+    def update_transcript(self, transcript_text: str, segments: list[dict[str, Any]]) -> None:
+        safe_text = str(transcript_text or "").strip()[:200000]
+        safe_segments = [dict(segment) for segment in list(segments or [])[:5000]]
+        with self._lock:
+            self.state.transcript_text = safe_text
+            self.state.transcript_segments = safe_segments
+        self._wake.set()
 
     def assert_owned(self) -> None:
         if self._lease_lost.is_set():
@@ -58,6 +72,7 @@ class LeaseHeartbeat:
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
         self._thread.join(timeout=self.interval_seconds + 1)
 
     def _snapshot(self) -> HeartbeatState:
@@ -66,18 +81,48 @@ class LeaseHeartbeat:
                 progress_percent=self.state.progress_percent,
                 stage_label=self.state.stage_label,
                 stage_detail=self.state.stage_detail,
+                transcript_text=self.state.transcript_text,
+                transcript_segments=[dict(segment) for segment in self.state.transcript_segments],
             )
 
+    def _report_snapshot(self, state: HeartbeatState) -> None:
+        if state.transcript_text or state.transcript_segments:
+            self.client.report_whisper_progress(
+                self.claim,
+                state.progress_percent,
+                state.stage_label,
+                state.stage_detail,
+                state.transcript_text or None,
+                state.transcript_segments or None,
+            )
+            return
+
+        self.client.report_whisper_progress(
+            self.claim,
+            state.progress_percent,
+            state.stage_label,
+            state.stage_detail,
+        )
+
     def _run(self) -> None:
-        while not self._stop.wait(self.interval_seconds):
+        last_sent_at = 0.0
+        minimum_push_interval = min(2.0, self.interval_seconds)
+        while not self._stop.is_set():
+            self._wake.wait(self.interval_seconds)
+            self._wake.clear()
+            if self._stop.is_set():
+                return
+
+            now = time.monotonic()
+            if last_sent_at > 0:
+                remaining = minimum_push_interval - (now - last_sent_at)
+                if remaining > 0 and self._stop.wait(remaining):
+                    return
+
             state = self._snapshot()
             try:
-                self.client.report_whisper_progress(
-                    self.claim,
-                    state.progress_percent,
-                    state.stage_label,
-                    state.stage_detail,
-                )
+                self._report_snapshot(state)
+                last_sent_at = time.monotonic()
             except WorkerLeaseLostError as exc:
                 self._last_error = exc
                 self._lease_lost.set()
@@ -172,6 +217,7 @@ class FasterWhisperHandler:
             if text and end > start:
                 segments.append({"start": round(start, 3), "end": round(end, 3), "text": text})
                 transcript_parts.append(text)
+                heartbeat.update_transcript(" ".join(transcript_parts).strip(), segments)
 
             if duration > 0:
                 ratio = min(1.0, max(0.0, end / duration))
@@ -258,12 +304,24 @@ class MlxWhisperHandler:
         started = time.monotonic()
         heartbeat.update(20, "Transcribing", "MLX Whisper transcription started.")
 
-        result = self._transcribe(
-            str(input_path),
-            path_or_hf_repo=model_repository,
-            language=claim.language or None,
-            verbose=False,
-        )
+        capture = MlxVerboseTranscriptCapture(heartbeat)
+        capture_verbose = self.transcribe_func is None
+        if capture_verbose:
+            with redirect_stdout(capture):
+                result = self._transcribe(
+                    str(input_path),
+                    path_or_hf_repo=model_repository,
+                    language=claim.language or None,
+                    verbose=True,
+                )
+            capture.finish()
+        else:
+            result = self._transcribe(
+                str(input_path),
+                path_or_hf_repo=model_repository,
+                language=claim.language or None,
+                verbose=False,
+            )
         heartbeat.assert_owned()
 
         raw_segments = result.get("segments") or []
@@ -284,6 +342,7 @@ class MlxWhisperHandler:
             raise RuntimeError("Whisper returned an empty transcript")
 
         duration = max((float(segment["end"]) for segment in segments), default=0.0)
+        heartbeat.update_transcript(transcript_text, segments)
         processing_seconds = round(time.monotonic() - started, 3)
         heartbeat.update(94, "Transcription complete", "MLX transcript ready; preparing requested post-processing.")
 

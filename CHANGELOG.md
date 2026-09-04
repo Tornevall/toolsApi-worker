@@ -8,6 +8,7 @@ All notable changes to toolsApi-worker are documented here.
 
 - Normalize socket/read/connect timeouts from ToolsAPI JSON requests into retryable worker transport errors so a lost terminal HTTP acknowledgement retries the exact same completion payload instead of escaping into a conflicting `/fail` submission. This repairs the production job #78 failure pattern while preserving HTTP 401/403 authentication and HTTP 409 lease-loss semantics. Fixes #43.
 - Keep the independent Whisper lease heartbeat active while transcript completion, failure, or diarization-only terminal acknowledgement is unresolved. Transient terminal retries now retain lease freshness and the occupied worker slot until ToolsAPI accepts the exact payload or definitively rejects ownership; a completion HTTP 409 lease loss cannot fall through into a conflicting failure submission. Fixes #37.
+- Remote Whisper now publishes bounded cumulative live transcript text and timestamped segments while transcription is still running. `faster-whisper` streams from its segment iterator and Apple Silicon MLX captures incremental timestamp output, allowing ToolsAPI to show real transcript evidence and progress before terminal completion without writing transcript content to worker logs. Fixes #39.
 
 ### Added
 

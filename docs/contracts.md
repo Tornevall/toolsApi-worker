@@ -92,17 +92,29 @@ Diarization-only operations send progress through:
 
 `POST /api/whisper/worker/jobs/{job_id}/diarization/progress`
 
-Both carry the current lease and generation:
+Both carry the current lease and generation. Transcript operations may additionally send a bounded cumulative live transcript snapshot and timestamped segments:
 
 ```json
 {
   "lease_id": "opaque-value",
   "generation": 2,
-  "progress_percent": 96,
-  "stage_label": "Speaker diarization",
-  "stage_detail": "Detecting speaker turns."
+  "progress_percent": 31,
+  "stage_label": "Transcribing",
+  "stage_detail": "42.0 seconds transcribed · 8 segments received.",
+  "transcript_text": "Partial transcript text received so far.",
+  "segments": [
+    {
+      "start": 37.2,
+      "end": 42.0,
+      "text": "Partial transcript text received so far."
+    }
+  ]
 }
 ```
+
+Live transcript fields are progress evidence, not terminal state. ToolsAPI may use the latest accepted segment timestamp to derive trustworthy progress and estimated completion while the job remains leased. The final `/complete` submission remains authoritative and still carries the entire final transcript and normalized segment set.
+
+`faster-whisper` publishes live snapshots while consuming its segment iterator. Apple Silicon MLX captures `mlx-whisper`'s incremental timestamped verbose segment output and forwards it through the same bounded progress contract; transcript text is not written to local worker logs. The independent heartbeat remains active even when the backend produces no new segment.
 
 The production runtime reports heartbeat independently of transcript production and diarization progress. Slow Whisper or pyannote model loading can therefore keep the lease alive even while visible progress is unchanged. An accepted update refreshes the lease and the shared Whisper runtime heartbeat used by web/mobile polling.
 
@@ -215,4 +227,4 @@ Python 3.10 or newer is required on every supported platform. Windows service in
 
 ## Compatibility
 
-Contract version 2 remains the current wire contract and existing API route paths remain unchanged and unversioned. The uniform-worker change tightens production runtime prerequisites and remote source staging without adding a new URL or route namespace. Version 1 workers must not claim version 2 jobs.
+Contract version 2 remains the current wire contract and existing API route paths remain unchanged and unversioned. Live transcript progress is additive to the existing progress payload; older ToolsAPI deployments ignore none of the required terminal semantics, while current ToolsAPI persists the optional live fields when present. The uniform-worker change tightens production runtime prerequisites and remote source staging without adding a new URL or route namespace. Version 1 workers must not claim version 2 jobs.
