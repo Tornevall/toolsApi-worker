@@ -1,0 +1,143 @@
+name: One-shot #37 terminal heartbeat repair
+
+on:
+  push:
+    branches:
+      - fix/37-terminal-heartbeat
+    paths:
+      - '.github/workflows/one-shot-37-terminal-heartbeat.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/37-terminal-heartbeat
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply runtime, regression and documentation changes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, found {count}')
+              return text.replace(old, new, 1)
+
+          runtime_path = Path('src/toolsapi_worker/runtime.py')
+          runtime = runtime_path.read_text()
+          runtime = replace_once(
+              runtime,
+              '''                heartbeat.update(99, "Finalizing", "Submitting speaker-diarization result to ToolsAPI.")\n                heartbeat.stop()\n                self._retry_terminal(lambda: self.client.complete_whisper_diarization(claim, diarization))\n                return\n''',
+              '''                heartbeat.update(99, "Finalizing", "Submitting speaker-diarization result to ToolsAPI.")\n                self._retry_terminal(\n                    lambda: self.client.complete_whisper_diarization(claim, diarization),\n                    heartbeat,\n                )\n                return\n''',
+              'diarization completion path',
+          )
+          runtime = replace_once(
+              runtime,
+              '''            heartbeat.update(99, "Finalizing", "Submitting remote Whisper transcript and diarization result to ToolsAPI.")\n            heartbeat.stop()\n            self._retry_terminal(\n                lambda: self.client.complete_whisper(\n                    claim,\n                    result.transcript_text,\n                    segments,\n                    result.runtime,\n                    diarization,\n                )\n            )\n        except WorkerLeaseLostError:\n            raise\n        except Exception as exc:\n            heartbeat.stop()\n''',
+              '''            heartbeat.update(99, "Finalizing", "Submitting remote Whisper transcript and diarization result to ToolsAPI.")\n            self._retry_terminal(\n                lambda: self.client.complete_whisper(\n                    claim,\n                    result.transcript_text,\n                    segments,\n                    result.runtime,\n                    diarization,\n                ),\n                heartbeat,\n            )\n        except WorkerLeaseLostError:\n            raise\n        except Exception as exc:\n''',
+              'transcript completion path',
+          )
+          runtime = replace_once(
+              runtime,
+              '''                    )\n                )\n            else:\n                self._retry_terminal(\n                    lambda: self.client.fail_whisper(\n                        claim,\n                        "transcription_failed",\n                        self._safe_error_message(exc),\n                        retryable=True,\n                    )\n                )\n''',
+              '''                    ),\n                    heartbeat,\n                )\n            else:\n                self._retry_terminal(\n                    lambda: self.client.fail_whisper(\n                        claim,\n                        "transcription_failed",\n                        self._safe_error_message(exc),\n                        retryable=True,\n                    ),\n                    heartbeat,\n                )\n''',
+              'failure terminal paths',
+          )
+          runtime = replace_once(
+              runtime,
+              '''    def _retry_terminal(self, submit: Callable[[], dict[str, Any]]) -> dict[str, Any]:\n        while True:\n            try:\n                return submit()\n            except WorkerLeaseLostError:\n                raise\n            except WorkerApiError:\n                self.sleep(self.config.poll_seconds)\n''',
+              '''    def _retry_terminal(\n        self,\n        submit: Callable[[], dict[str, Any]],\n        heartbeat: LeaseHeartbeat | None = None,\n    ) -> dict[str, Any]:\n        while True:\n            if heartbeat is not None:\n                heartbeat.assert_owned()\n            try:\n                return submit()\n            except WorkerLeaseLostError:\n                raise\n            except WorkerApiError:\n                if heartbeat is not None:\n                    heartbeat.assert_owned()\n                self.sleep(self.config.poll_seconds)\n''',
+              'terminal retry helper',
+          )
+          runtime_path.write_text(runtime)
+
+          test_path = Path('tests/test_runtime.py')
+          test = test_path.read_text()
+          test = replace_once(
+              test,
+              'from toolsapi_worker.api import WhisperClaim, WorkerApiError\n',
+              'from toolsapi_worker.api import WhisperClaim, WorkerApiError, WorkerLeaseLostError\n',
+              'test import',
+          )
+          test = replace_once(
+              test,
+              '''        self.fail_calls = []\n        self.complete_failures_remaining = 0\n''',
+              '''        self.fail_calls = []\n        self.complete_failures_remaining = 0\n        self.complete_started = threading.Event()\n        self.complete_release = None\n        self.complete_lease_lost = False\n        self.fail_started = threading.Event()\n        self.fail_release = None\n        self.diarization_complete_started = threading.Event()\n        self.diarization_complete_release = None\n''',
+              'fake client controls',
+          )
+          test = replace_once(
+              test,
+              '''        self.complete_calls.append(\n            (claim, transcript_text, list(segments or []), dict(runtime or {}), dict(diarization or {}))\n        )\n        if self.complete_failures_remaining > 0:\n''',
+              '''        self.complete_calls.append(\n            (claim, transcript_text, list(segments or []), dict(runtime or {}), dict(diarization or {}))\n        )\n        self.complete_started.set()\n        if self.complete_release is not None and not self.complete_release.wait(timeout=2.0):\n            raise RuntimeError("synthetic completion acknowledgement timed out")\n        if self.complete_lease_lost:\n            raise WorkerLeaseLostError("synthetic lease loss during completion")\n        if self.complete_failures_remaining > 0:\n''',
+              'fake completion behavior',
+          )
+          test = replace_once(
+              test,
+              '''    def complete_whisper_diarization(self, claim, diarization):\n        self.diarization_complete_calls.append((claim, dict(diarization)))\n        return {"ok": True, "accepted": True}\n''',
+              '''    def complete_whisper_diarization(self, claim, diarization):\n        self.diarization_complete_calls.append((claim, dict(diarization)))\n        self.diarization_complete_started.set()\n        if self.diarization_complete_release is not None and not self.diarization_complete_release.wait(timeout=2.0):\n            raise RuntimeError("synthetic diarization acknowledgement timed out")\n        return {"ok": True, "accepted": True}\n''',
+              'fake diarization completion behavior',
+          )
+          test = replace_once(
+              test,
+              '''    def fail_whisper(self, claim, error_code, message, retryable=True):\n        self.fail_calls.append((claim, error_code, message, retryable))\n        return {"ok": True, "accepted": True}\n''',
+              '''    def fail_whisper(self, claim, error_code, message, retryable=True):\n        self.fail_calls.append((claim, error_code, message, retryable))\n        self.fail_started.set()\n        if self.fail_release is not None and not self.fail_release.wait(timeout=2.0):\n            raise RuntimeError("synthetic failure acknowledgement timed out")\n        return {"ok": True, "accepted": True}\n''',
+              'fake failure behavior',
+          )
+          marker = '    def test_completed_job_runs_diarization_before_terminal_ack_and_cleans_temp_media(self):\n'
+          if marker not in test:
+              raise SystemExit('test insertion marker missing')
+          regression = '''    def test_heartbeat_continues_until_completion_acknowledgement(self):\n        with tempfile.TemporaryDirectory() as root:\n            client = FakeClient()\n            client.complete_release = threading.Event()\n            runtime = WorkerRuntime(\n                self.config(root, heartbeat_seconds=0.05),\n                client=client,\n                handler=SlowHandler(delay=0.01),\n                diarizer=FakeDiarizer(),\n                sleep=lambda seconds: None,\n            )\n            worker_thread = threading.Thread(target=runtime.process_claim, args=(self.claim(),), daemon=True)\n            worker_thread.start()\n\n            self.assertTrue(client.complete_started.wait(timeout=1.0))\n            progress_before_wait = len(client.progress_calls)\n            time.sleep(0.16)\n            progress_after_wait = len(client.progress_calls)\n            finalizing_updates = [call for call in client.progress_calls if call[2] == "Finalizing" and call[1] == 99]\n            self.assertGreaterEqual(progress_after_wait - progress_before_wait, 2)\n            self.assertGreaterEqual(len(finalizing_updates), 2)\n\n            client.complete_release.set()\n            worker_thread.join(timeout=1.0)\n            self.assertFalse(worker_thread.is_alive())\n            self.assertEqual(1, len(client.complete_calls))\n            self.assertEqual([], client.fail_calls)\n            self.assertEqual([], list(Path(root).iterdir()))\n\n    def test_heartbeat_continues_until_failure_acknowledgement(self):\n        with tempfile.TemporaryDirectory() as root:\n            client = FakeClient()\n            client.fail_release = threading.Event()\n            runtime = WorkerRuntime(\n                self.config(root, heartbeat_seconds=0.05),\n                client=client,\n                handler=SlowHandler(delay=0.01, fail=True),\n                diarizer=FakeDiarizer(),\n                sleep=lambda seconds: None,\n            )\n            worker_thread = threading.Thread(target=runtime.process_claim, args=(self.claim(),), daemon=True)\n            worker_thread.start()\n\n            self.assertTrue(client.fail_started.wait(timeout=1.0))\n            progress_before_wait = len(client.progress_calls)\n            time.sleep(0.16)\n            progress_after_wait = len(client.progress_calls)\n            self.assertGreaterEqual(progress_after_wait - progress_before_wait, 2)\n\n            client.fail_release.set()\n            worker_thread.join(timeout=1.0)\n            self.assertFalse(worker_thread.is_alive())\n            self.assertEqual(1, len(client.fail_calls))\n            self.assertEqual([], list(Path(root).iterdir()))\n\n    def test_heartbeat_continues_until_diarization_only_acknowledgement(self):\n        with tempfile.TemporaryDirectory() as root:\n            client = FakeClient()\n            client.diarization_complete_release = threading.Event()\n            runtime = WorkerRuntime(\n                self.config(root, heartbeat_seconds=0.05),\n                client=client,\n                handler=SlowHandler(delay=0.01),\n                diarizer=FakeDiarizer(),\n                sleep=lambda seconds: None,\n            )\n            claim = self.claim(operation="diarize", diarization_requested=True)\n            worker_thread = threading.Thread(target=runtime.process_claim, args=(claim,), daemon=True)\n            worker_thread.start()\n\n            self.assertTrue(client.diarization_complete_started.wait(timeout=1.0))\n            progress_before_wait = len(client.progress_calls)\n            time.sleep(0.16)\n            progress_after_wait = len(client.progress_calls)\n            self.assertGreaterEqual(progress_after_wait - progress_before_wait, 2)\n\n            client.diarization_complete_release.set()\n            worker_thread.join(timeout=1.0)\n            self.assertFalse(worker_thread.is_alive())\n            self.assertEqual(1, len(client.diarization_complete_calls))\n            self.assertEqual([], client.fail_calls)\n            self.assertEqual([], list(Path(root).iterdir()))\n\n    def test_completion_lease_loss_never_falls_through_to_failure_submission(self):\n        with tempfile.TemporaryDirectory() as root:\n            client = FakeClient()\n            client.complete_lease_lost = True\n            runtime = WorkerRuntime(\n                self.config(root),\n                client=client,\n                handler=SlowHandler(delay=0.01),\n                diarizer=FakeDiarizer(),\n                sleep=lambda seconds: None,\n            )\n\n            with self.assertRaises(WorkerLeaseLostError):\n                runtime.process_claim(self.claim())\n\n            self.assertEqual(1, len(client.complete_calls))\n            self.assertEqual([], client.fail_calls)\n            self.assertEqual([], list(Path(root).iterdir()))\n\n'''
+          test_path.write_text(test.replace(marker, regression + marker, 1))
+
+          path = Path('CHANGELOG.md')
+          text = path.read_text()
+          marker = '## Unreleased\n\n'
+          section = '''## Unreleased\n\n### Fixed\n\n- Keep the independent Whisper lease heartbeat active while transcript completion, failure, or diarization-only terminal acknowledgement is unresolved. Transient terminal retries now retain lease freshness and the occupied worker slot until ToolsAPI accepts the exact payload or definitively rejects ownership; a completion HTTP 409 lease loss cannot fall through into a conflicting failure submission. Fixes #37.\n\n'''
+          path.write_text(replace_once(text, marker, section, 'changelog marker'))
+
+          path = Path('AGENTS.md')
+          text = path.read_text()
+          marker = '- A concurrency slot stays occupied while a terminal acknowledgement is unresolved. Do not claim new work merely because a terminal HTTP response was lost.\n'
+          addition = marker + '- The independent lease heartbeat remains active while terminal acknowledgement is unresolved and stops only after accepted terminal state or definitive lease loss.\n'
+          path.write_text(replace_once(text, marker, addition, 'AGENTS terminal rule'))
+
+          path = Path('docs/contracts.md')
+          text = path.read_text()
+          marker = 'The production runtime reports heartbeat independently of transcript production and diarization progress. Slow Whisper or pyannote model loading can therefore keep the lease alive even while visible progress is unchanged. An accepted update refreshes the lease and the shared Whisper runtime heartbeat used by web/mobile polling.\n'
+          addition = marker + '\nThe same independent heartbeat remains active while a terminal completion, failure, or diarization result is awaiting acknowledgement or retry. The worker stops it only after ToolsAPI accepts terminal state or definitively rejects the lease, so a transient terminal HTTP/network failure cannot create a lease-expiry gap after expensive processing has finished.\n'
+          path.write_text(replace_once(text, marker, addition, 'contracts heartbeat paragraph'))
+
+          path = Path('README.md')
+          text = path.read_text()
+          marker = 'TOOLS_WORKER_TEMP_ROOT=\n```\n\n`TOOLS_WORKER_ID` is operator-selected.'
+          addition = 'TOOLS_WORKER_TEMP_ROOT=\n```\n\nThe heartbeat is independent from Whisper/pyannote progress and remains active through terminal acknowledgement and transient terminal retries. A worker stops refreshing the lease only after ToolsAPI accepts completion/failure or definitively rejects ownership, preventing a finished job from losing its lease while the final API response is unresolved.\n\n`TOOLS_WORKER_ID` is operator-selected.'
+          path.write_text(replace_once(text, marker, addition, 'README configuration marker'))
+          PY
+
+      - name: Install package
+        run: python -m pip install .
+
+      - name: Run focused regression
+        run: |
+          python -m compileall -q src tests
+          python -m unittest discover -s tests -p 'test_runtime.py' -v
+
+      - name: Commit repair and remove one-shot workflow
+        run: |
+          rm .github/workflows/one-shot-37-terminal-heartbeat.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/toolsapi_worker/runtime.py tests/test_runtime.py CHANGELOG.md AGENTS.md docs/contracts.md README.md .github/workflows/one-shot-37-terminal-heartbeat.yml
+          git commit -m 'Keep Whisper heartbeat alive through terminal acknowledgement'
+          git push origin HEAD:fix/37-terminal-heartbeat
