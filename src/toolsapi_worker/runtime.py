@@ -386,8 +386,10 @@ class WorkerRuntime:
                 _, diarization = self.diarizer.diarize(claim, input_path, [], heartbeat)
                 heartbeat.assert_owned()
                 heartbeat.update(99, "Finalizing", "Submitting speaker-diarization result to ToolsAPI.")
-                heartbeat.stop()
-                self._retry_terminal(lambda: self.client.complete_whisper_diarization(claim, diarization))
+                self._retry_terminal(
+                    lambda: self.client.complete_whisper_diarization(claim, diarization),
+                    heartbeat,
+                )
                 return
 
             result = self.handler.transcribe(claim, input_path, heartbeat)
@@ -405,7 +407,6 @@ class WorkerRuntime:
                 heartbeat.assert_owned()
 
             heartbeat.update(99, "Finalizing", "Submitting remote Whisper transcript and diarization result to ToolsAPI.")
-            heartbeat.stop()
             self._retry_terminal(
                 lambda: self.client.complete_whisper(
                     claim,
@@ -413,12 +414,12 @@ class WorkerRuntime:
                     segments,
                     result.runtime,
                     diarization,
-                )
+                ),
+                heartbeat,
             )
         except WorkerLeaseLostError:
             raise
         except Exception as exc:
-            heartbeat.stop()
             if claim.operation == "diarize":
                 self._retry_terminal(
                     lambda: self.client.complete_whisper_diarization(
@@ -436,7 +437,8 @@ class WorkerRuntime:
                             "labelled_segment_count": 0,
                             "hf_token_present": bool(self.config.diarization_hf_token),
                         },
-                    )
+                    ),
+                    heartbeat,
                 )
             else:
                 self._retry_terminal(
@@ -445,7 +447,8 @@ class WorkerRuntime:
                         "transcription_failed",
                         self._safe_error_message(exc),
                         retryable=True,
-                    )
+                    ),
+                    heartbeat,
                 )
         finally:
             heartbeat.stop()
@@ -456,13 +459,21 @@ class WorkerRuntime:
             return self.client.download_whisper_media(claim, job_dir / "input-media")
         raise RuntimeError("URL-source execution is disabled on this worker")
 
-    def _retry_terminal(self, submit: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    def _retry_terminal(
+        self,
+        submit: Callable[[], dict[str, Any]],
+        heartbeat: LeaseHeartbeat | None = None,
+    ) -> dict[str, Any]:
         while True:
+            if heartbeat is not None:
+                heartbeat.assert_owned()
             try:
                 return submit()
             except WorkerLeaseLostError:
                 raise
             except WorkerApiError:
+                if heartbeat is not None:
+                    heartbeat.assert_owned()
                 self.sleep(self.config.poll_seconds)
 
     @staticmethod

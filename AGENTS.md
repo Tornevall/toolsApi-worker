@@ -17,6 +17,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 - Never allow two current lease generations for the same delegated job.
 - Completion calls must be safely retryable/idempotent. A worker must not assume completion was accepted when the response is lost.
 - A concurrency slot stays occupied while a terminal acknowledgement is unresolved. Do not claim new work merely because a terminal HTTP response was lost.
+- The independent lease heartbeat remains active while terminal acknowledgement is unresolved and stops only after accepted terminal state or definitive lease loss.
 - The initial executable runtime is serial. Keep `TOOLS_WORKER_CONCURRENCY=1` until parallel runtime ownership has dedicated implementation and tests.
 
 ## Workload contracts and reuse

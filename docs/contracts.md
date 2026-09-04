@@ -106,6 +106,8 @@ Both carry the current lease and generation:
 
 The production runtime reports heartbeat independently of transcript production and diarization progress. Slow Whisper or pyannote model loading can therefore keep the lease alive even while visible progress is unchanged. An accepted update refreshes the lease and the shared Whisper runtime heartbeat used by web/mobile polling.
 
+The same independent heartbeat remains active while a terminal completion, failure, or diarization result is awaiting acknowledgement or retry. The worker stops it only after ToolsAPI accepts terminal state or definitively rejects the lease, so a transient terminal HTTP/network failure cannot create a lease-expiry gap after expensive processing has finished.
+
 The worker host itself is a continuously running service/daemon around this poll loop. Windows uses a native Windows service, Linux uses systemd and macOS uses launchd. Task Scheduler is not the worker execution model.
 
 ## Transcript completion
