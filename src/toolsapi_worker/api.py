@@ -138,6 +138,8 @@ class ToolsApiClient:
         progress_percent: int,
         stage_label: str | None = None,
         stage_detail: str | None = None,
+        transcript_text: str | None = None,
+        segments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if progress_percent < 0 or progress_percent > 99:
             raise ValueError("progress_percent must be between 0 and 99")
@@ -151,6 +153,10 @@ class ToolsApiClient:
             body["stage_label"] = stage_label
         if stage_detail:
             body["stage_detail"] = stage_detail
+        if transcript_text is not None:
+            body["transcript_text"] = str(transcript_text)[:200000]
+        if segments is not None:
+            body["segments"] = [dict(segment) for segment in list(segments)[:5000]]
 
         suffix = "diarization/progress" if claim.operation == "diarize" else "progress"
         payload = self._request_json(
