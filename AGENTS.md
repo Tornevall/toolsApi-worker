@@ -47,6 +47,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 - Ubuntu diarization auto-detection is independent from Whisper: use CUDA only after PyTorch both reports CUDA availability and successfully executes a CUDA tensor/kernel probe; otherwise use CPU.
 - Apple Silicon macOS production installation uses the `whisper-mlx` package extra and `mlx-whisper`; select it through the advertised Metal/MLX device capability.
 - Speaker diarization uses `pyannote.audio` and `pyannote/speaker-diarization-community-1` on Linux, Windows and macOS. The configuration flag remains readable for diagnostics/maintenance, but a live `whisper.transcribe` service must keep diarization enabled and must fail before polling if the runtime is unavailable.
+- `toolsapi-worker diagnose diarization` is the portable local diagnostic surface on every supported worker OS. It must never poll/claim ToolsAPI work, must validate real configured pyannote model loading, may optionally run a caller-supplied local audio file, must return non-zero on diagnostic failure, and must never print configured worker or Hugging Face token values. Bounded provider exception detail is allowed only after explicit local secret redaction.
 - Python 3.10 or newer is the worker runtime on every supported platform.
 - Ubuntu/Debian install paths must bootstrap the matching Python `venv` package automatically when `ensurepip` is missing and apt is available with root/sudo. Do not surface the raw Debian `ensurepip is not available` failure as the final installer result when it is repairable.
 - Windows workers are native Windows services. Do not introduce WSL as a runtime dependency and do not use Task Scheduler as the worker execution model. PowerShell is for installation/service administration only; the worker process is the continuous Python poll loop.
@@ -101,6 +102,7 @@ Tests should cover at minimum when relevant:
 - diarization-only claims never run Whisper and cannot submit or fail the existing transcript
 - a successful diarization maps speaker labels onto segments and submits safe structured metadata
 - a diarization failure preserves the transcript and never exposes the Hugging Face token value
+- local diarization diagnostics load the configured pipeline without claiming live work, support optional audio inference, return non-zero on failure and redact configured worker/Hugging Face token values from exception output
 - explicit CUDA configuration does not silently fall back to CPU
 - fresh Ubuntu auto-detection selects CUDA only from executable CTranslate2/PyTorch capability and otherwise selects CPU
 - missing Ubuntu/Debian `ensurepip`/venv support is repaired through the matching apt venv package when privilege is available

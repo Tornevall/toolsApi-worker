@@ -10,6 +10,7 @@ All notable changes to toolsApi-worker are documented here.
 
 ### Added
 
+- Portable `toolsapi-worker diagnose diarization` host diagnostics for Linux, Windows and macOS. The command safely reports configured/resolved diarization runtime state, verifies that the configured pyannote pipeline can actually load, optionally runs a local audio file through the pipeline, returns non-zero on failure, and redacts worker/Hugging Face token values from local exception details. Fixes #40.
 - Initial standalone worker repository architecture.
 - Pull-based polling and atomic claim/lease design.
 - Heartbeat-driven lease freshness and ToolsAPI-controlled timeout/reassignment rules.
@@ -101,6 +102,7 @@ All notable changes to toolsApi-worker are documented here.
 - Runtime `.env` and credentials are never committed; `.env.example` is the repository template.
 - Hugging Face token values stay local to the worker and are never logged or submitted to ToolsAPI; only a boolean token-presence diagnostic may leave the worker.
 - Unclassified pyannote/provider exceptions are reduced to a generic safe error before heartbeat or completion reporting, so configured token values and raw provider text cannot leave the worker through fallback diagnostics.
+- Local diarization diagnostics may show bounded provider exception detail only on the worker host; configured worker and Hugging Face token values are explicitly redacted before printing.
 - Diarization-only terminal payloads cannot contain transcript text or transcript segments and cannot use the transcript failure endpoint.
 - macOS launchd and Windows service startup do not source `.env` as executable shell code; the worker parses configuration data directly so credential values are not executed by a shell.
 - Worker client error messages do not include the configured bearer credential.

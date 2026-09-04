@@ -76,6 +76,24 @@ Run the local worker with:
 make run
 ```
 
+### Local diarization diagnostics
+
+Every worker can validate its own pyannote runtime without polling ToolsAPI or claiming a live job:
+
+```bash
+toolsapi-worker diagnose diarization --env-file <path-to-worker-env>
+```
+
+The command reports only safe runtime state, including whether diarization is enabled, whether a Hugging Face token is present, the configured/resolved device, runtime support and whether the configured pyannote pipeline can actually load. It exits with status `0` only when the model-load diagnostic succeeds. Worker credentials and Hugging Face token values are never printed.
+
+To test actual inference as well, supply any local audio file:
+
+```bash
+toolsapi-worker diagnose diarization --env-file <path-to-worker-env> --audio <path-to-audio-file>
+```
+
+A successful audio diagnostic reports speaker-turn and distinct-speaker counts. A failed diagnostic exits non-zero and may print a bounded local exception class/message after redacting configured worker and Hugging Face token values. This diagnostic is intentionally local-only and does not send the exception detail to ToolsAPI.
+
 ## macOS Apple Silicon installation
 
 Requirements:
@@ -320,3 +338,4 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 - `Tornevall/toolsApi-worker#17` - Native Windows Pascal CUDA compatibility
 - `Tornevall/toolsApi-worker#21` - Microsoft Store Python native Windows service registration
 - `Tornevall/toolsApi-worker#23` - Ubuntu venv bootstrap and runtime device auto-detection
+- `Tornevall/toolsApi-worker#40` - Portable local diarization diagnostics
