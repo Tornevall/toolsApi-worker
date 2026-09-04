@@ -278,7 +278,7 @@ TOOLS_WORKER_TEMP_ROOT=
 
 The heartbeat is independent from Whisper/pyannote progress and remains active through terminal acknowledgement and transient terminal retries. A worker stops refreshing the lease only after ToolsAPI accepts completion/failure or definitively rejects ownership, preventing a finished job from losing its lease while the final API response is unresolved.
 
-Steady-state active-job heartbeat uses `TOOLS_WORKER_HEARTBEAT_SECONDS`. If an active heartbeat/progress request fails with a transient transport/API error, the worker retries the same current snapshot on a shorter bounded cadence, by default no slower than one third of the steady-state interval and capped at five seconds. Only an accepted ToolsAPI report refreshes lease ownership; the worker never extends its own lease locally, and HTTP 409 remains definitive lease loss.
+Steady-state active-job heartbeat uses `TOOLS_WORKER_HEARTBEAT_SECONDS`. If an active heartbeat/progress request fails with a transient transport/API error, the worker retries the same current snapshot on a shorter bounded cadence. The default retry delay is the smaller of one third of the steady-state interval and five seconds. Only an accepted ToolsAPI report refreshes lease ownership; the worker never extends its own lease locally, and HTTP 409 remains definitive lease loss.
 
 Live transcript snapshots are additive progress data, not terminal state. They are bounded and sent only from the current lease while new segment evidence is produced; the final `/complete` payload remains authoritative.
 
