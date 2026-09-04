@@ -297,6 +297,8 @@ class ToolsApiClient:
             self._raise_http_error(exc)
         except urllib.error.URLError as exc:
             raise WorkerApiError("ToolsAPI worker request could not reach the configured API") from exc
+        except (TimeoutError, OSError) as exc:
+            raise WorkerApiError("ToolsAPI worker request timed out or lost the connection") from exc
 
         try:
             payload = json.loads(raw)
