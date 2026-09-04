@@ -256,6 +256,8 @@ TOOLS_WORKER_DIARIZATION_DEVICE=auto
 TOOLS_WORKER_TEMP_ROOT=
 ```
 
+The heartbeat is independent from Whisper/pyannote progress and remains active through terminal acknowledgement and transient terminal retries. A worker stops refreshing the lease only after ToolsAPI accepts completion/failure or definitively rejects ownership, preventing a finished job from losing its lease while the final API response is unresolved.
+
 `TOOLS_WORKER_ID` is operator-selected. Give every worker a stable unique id such as `datacenter0-cpu-01`, `windows-gpu-01` or `macos-apple-silicon`; the dedicated ToolsAPI worker credential name must match that id exactly. The stable id is also what ToolsAPI can use for explicit admin routing and benchmark/test selection.
 
 `TOOLS_WORKER_WHISPER_MODELS` may include additional runtime-specific models, but the six common Tools models are always effective for a production worker. `TOOLS_WORKER_ACCEPTS_URL_SOURCES` is retained as a compatibility configuration name; this runtime intentionally advertises false because ToolsAPI stages URL-origin sources centrally.

@@ -4,7 +4,7 @@ import time
 import unittest
 from pathlib import Path
 
-from toolsapi_worker.api import WhisperClaim, WorkerApiError
+from toolsapi_worker.api import WhisperClaim, WorkerApiError, WorkerLeaseLostError
 from toolsapi_worker.config import WorkerConfig
 from toolsapi_worker.runtime import (
     LeaseHeartbeat,
@@ -22,6 +22,13 @@ class FakeClient:
         self.diarization_complete_calls = []
         self.fail_calls = []
         self.complete_failures_remaining = 0
+        self.complete_started = threading.Event()
+        self.complete_release = None
+        self.complete_lease_lost = False
+        self.fail_started = threading.Event()
+        self.fail_release = None
+        self.diarization_complete_started = threading.Event()
+        self.diarization_complete_release = None
 
     def report_whisper_progress(self, claim, progress_percent, stage_label=None, stage_detail=None):
         self.progress_calls.append((claim.job_id, progress_percent, stage_label, stage_detail))
@@ -37,6 +44,11 @@ class FakeClient:
         self.complete_calls.append(
             (claim, transcript_text, list(segments or []), dict(runtime or {}), dict(diarization or {}))
         )
+        self.complete_started.set()
+        if self.complete_release is not None and not self.complete_release.wait(timeout=2.0):
+            raise RuntimeError("synthetic completion acknowledgement timed out")
+        if self.complete_lease_lost:
+            raise WorkerLeaseLostError("synthetic lease loss during completion")
         if self.complete_failures_remaining > 0:
             self.complete_failures_remaining -= 1
             raise WorkerApiError("temporary network failure")
@@ -44,10 +56,16 @@ class FakeClient:
 
     def complete_whisper_diarization(self, claim, diarization):
         self.diarization_complete_calls.append((claim, dict(diarization)))
+        self.diarization_complete_started.set()
+        if self.diarization_complete_release is not None and not self.diarization_complete_release.wait(timeout=2.0):
+            raise RuntimeError("synthetic diarization acknowledgement timed out")
         return {"ok": True, "accepted": True}
 
     def fail_whisper(self, claim, error_code, message, retryable=True):
         self.fail_calls.append((claim, error_code, message, retryable))
+        self.fail_started.set()
+        if self.fail_release is not None and not self.fail_release.wait(timeout=2.0):
+            raise RuntimeError("synthetic failure acknowledgement timed out")
         return {"ok": True, "accepted": True}
 
 
@@ -211,6 +229,108 @@ class WorkerRuntimeTest(unittest.TestCase):
             self.assertEqual(1, len(diarizer.calls))
             self.assertEqual(1, len(client.complete_calls))
             self.assertEqual([], client.fail_calls)
+
+    def test_heartbeat_continues_until_completion_acknowledgement(self):
+        with tempfile.TemporaryDirectory() as root:
+            client = FakeClient()
+            client.complete_release = threading.Event()
+            runtime = WorkerRuntime(
+                self.config(root, heartbeat_seconds=0.05),
+                client=client,
+                handler=SlowHandler(delay=0.01),
+                diarizer=FakeDiarizer(),
+                sleep=lambda seconds: None,
+            )
+            worker_thread = threading.Thread(target=runtime.process_claim, args=(self.claim(),), daemon=True)
+            worker_thread.start()
+
+            self.assertTrue(client.complete_started.wait(timeout=1.0))
+            progress_before_wait = len(client.progress_calls)
+            time.sleep(0.16)
+            progress_after_wait = len(client.progress_calls)
+            finalizing_updates = [call for call in client.progress_calls if call[2] == "Finalizing" and call[1] == 99]
+            self.assertGreaterEqual(progress_after_wait - progress_before_wait, 2)
+            self.assertGreaterEqual(len(finalizing_updates), 2)
+
+            client.complete_release.set()
+            worker_thread.join(timeout=1.0)
+            self.assertFalse(worker_thread.is_alive())
+            self.assertEqual(1, len(client.complete_calls))
+            self.assertEqual([], client.fail_calls)
+            self.assertEqual([], list(Path(root).iterdir()))
+
+    def test_heartbeat_continues_until_failure_acknowledgement(self):
+        with tempfile.TemporaryDirectory() as root:
+            client = FakeClient()
+            client.fail_release = threading.Event()
+            runtime = WorkerRuntime(
+                self.config(root, heartbeat_seconds=0.05),
+                client=client,
+                handler=SlowHandler(delay=0.01, fail=True),
+                diarizer=FakeDiarizer(),
+                sleep=lambda seconds: None,
+            )
+            worker_thread = threading.Thread(target=runtime.process_claim, args=(self.claim(),), daemon=True)
+            worker_thread.start()
+
+            self.assertTrue(client.fail_started.wait(timeout=1.0))
+            progress_before_wait = len(client.progress_calls)
+            time.sleep(0.16)
+            progress_after_wait = len(client.progress_calls)
+            self.assertGreaterEqual(progress_after_wait - progress_before_wait, 2)
+
+            client.fail_release.set()
+            worker_thread.join(timeout=1.0)
+            self.assertFalse(worker_thread.is_alive())
+            self.assertEqual(1, len(client.fail_calls))
+            self.assertEqual([], list(Path(root).iterdir()))
+
+    def test_heartbeat_continues_until_diarization_only_acknowledgement(self):
+        with tempfile.TemporaryDirectory() as root:
+            client = FakeClient()
+            client.diarization_complete_release = threading.Event()
+            runtime = WorkerRuntime(
+                self.config(root, heartbeat_seconds=0.05),
+                client=client,
+                handler=SlowHandler(delay=0.01),
+                diarizer=FakeDiarizer(),
+                sleep=lambda seconds: None,
+            )
+            claim = self.claim(operation="diarize", diarization_requested=True)
+            worker_thread = threading.Thread(target=runtime.process_claim, args=(claim,), daemon=True)
+            worker_thread.start()
+
+            self.assertTrue(client.diarization_complete_started.wait(timeout=1.0))
+            progress_before_wait = len(client.progress_calls)
+            time.sleep(0.16)
+            progress_after_wait = len(client.progress_calls)
+            self.assertGreaterEqual(progress_after_wait - progress_before_wait, 2)
+
+            client.diarization_complete_release.set()
+            worker_thread.join(timeout=1.0)
+            self.assertFalse(worker_thread.is_alive())
+            self.assertEqual(1, len(client.diarization_complete_calls))
+            self.assertEqual([], client.fail_calls)
+            self.assertEqual([], list(Path(root).iterdir()))
+
+    def test_completion_lease_loss_never_falls_through_to_failure_submission(self):
+        with tempfile.TemporaryDirectory() as root:
+            client = FakeClient()
+            client.complete_lease_lost = True
+            runtime = WorkerRuntime(
+                self.config(root),
+                client=client,
+                handler=SlowHandler(delay=0.01),
+                diarizer=FakeDiarizer(),
+                sleep=lambda seconds: None,
+            )
+
+            with self.assertRaises(WorkerLeaseLostError):
+                runtime.process_claim(self.claim())
+
+            self.assertEqual(1, len(client.complete_calls))
+            self.assertEqual([], client.fail_calls)
+            self.assertEqual([], list(Path(root).iterdir()))
 
     def test_completed_job_runs_diarization_before_terminal_ack_and_cleans_temp_media(self):
         with tempfile.TemporaryDirectory() as root:

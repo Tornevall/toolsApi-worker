@@ -4,6 +4,10 @@ All notable changes to toolsApi-worker are documented here.
 
 ## Unreleased
 
+### Fixed
+
+- Keep the independent Whisper lease heartbeat active while transcript completion, failure, or diarization-only terminal acknowledgement is unresolved. Transient terminal retries now retain lease freshness and the occupied worker slot until ToolsAPI accepts the exact payload or definitively rejects ownership; a completion HTTP 409 lease loss cannot fall through into a conflicting failure submission. Fixes #37.
+
 ### Added
 
 - Initial standalone worker repository architecture.
