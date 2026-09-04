@@ -85,6 +85,25 @@ class LeaseHeartbeat:
                 transcript_segments=[dict(segment) for segment in self.state.transcript_segments],
             )
 
+    def _report_snapshot(self, state: HeartbeatState) -> None:
+        if state.transcript_text or state.transcript_segments:
+            self.client.report_whisper_progress(
+                self.claim,
+                state.progress_percent,
+                state.stage_label,
+                state.stage_detail,
+                state.transcript_text or None,
+                state.transcript_segments or None,
+            )
+            return
+
+        self.client.report_whisper_progress(
+            self.claim,
+            state.progress_percent,
+            state.stage_label,
+            state.stage_detail,
+        )
+
     def _run(self) -> None:
         last_sent_at = 0.0
         minimum_push_interval = min(2.0, self.interval_seconds)
@@ -102,14 +121,7 @@ class LeaseHeartbeat:
 
             state = self._snapshot()
             try:
-                self.client.report_whisper_progress(
-                    self.claim,
-                    state.progress_percent,
-                    state.stage_label,
-                    state.stage_detail,
-                    state.transcript_text or None,
-                    state.transcript_segments or None,
-                )
+                self._report_snapshot(state)
                 last_sent_at = time.monotonic()
             except WorkerLeaseLostError as exc:
                 self._last_error = exc
@@ -293,14 +305,23 @@ class MlxWhisperHandler:
         heartbeat.update(20, "Transcribing", "MLX Whisper transcription started.")
 
         capture = MlxVerboseTranscriptCapture(heartbeat)
-        with redirect_stdout(capture):
+        capture_verbose = self.transcribe_func is None
+        if capture_verbose:
+            with redirect_stdout(capture):
+                result = self._transcribe(
+                    str(input_path),
+                    path_or_hf_repo=model_repository,
+                    language=claim.language or None,
+                    verbose=True,
+                )
+            capture.finish()
+        else:
             result = self._transcribe(
                 str(input_path),
                 path_or_hf_repo=model_repository,
                 language=claim.language or None,
-                verbose=True,
+                verbose=False,
             )
-        capture.finish()
         heartbeat.assert_owned()
 
         raw_segments = result.get("segments") or []
