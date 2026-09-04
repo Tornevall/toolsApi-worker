@@ -23,6 +23,8 @@ class DiarizationDiagnostic:
             "model_dir_configured": bool(self.config.diarization_model_dir.strip()),
             "hf_token_present": bool(self.config.diarization_hf_token),
             "configured_device": self.config.diarization_device,
+            "min_speakers": self.config.diarization_min_speakers,
+            "max_speakers": self.config.diarization_max_speakers,
             "supported": bool(self.diarizer.supported),
             "pipeline_loaded": False,
             "audio_checked": False,
@@ -52,7 +54,13 @@ class DiarizationDiagnostic:
             if not media.is_file():
                 raise FileNotFoundError(f"Local diagnostic audio file does not exist: {media}")
 
-            output = pipeline(str(media))
+            kwargs: dict[str, Any] = {}
+            if self.config.diarization_min_speakers is not None:
+                kwargs["min_speakers"] = self.config.diarization_min_speakers
+            if self.config.diarization_max_speakers is not None:
+                kwargs["max_speakers"] = self.config.diarization_max_speakers
+
+            output = pipeline(str(media), **kwargs)
             annotation = getattr(output, "speaker_diarization", output)
             if not hasattr(annotation, "itertracks"):
                 raise RuntimeError("Speaker diarization returned an unsupported result shape.")
