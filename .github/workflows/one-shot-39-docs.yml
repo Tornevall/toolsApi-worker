@@ -1,0 +1,30 @@
+name: One-shot worker live progress docs
+
+on:
+  push:
+    branches:
+      - fix/39-live-transcript-progress
+    paths:
+      - .github/workflows/one-shot-39-docs.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/39-live-transcript-progress
+          fetch-depth: 0
+      - name: Patch docs and remove helper
+        run: python3 .github/scripts/patch-39-docs.py
+      - name: Commit documentation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Document remote Whisper live progress"
+          git push origin HEAD:fix/39-live-transcript-progress
