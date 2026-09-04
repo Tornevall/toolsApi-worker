@@ -23,7 +23,11 @@ class _Annotation:
 
 
 class _Pipeline:
-    def __call__(self, _path):
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, path, **kwargs):
+        self.calls.append((path, kwargs))
         return _Annotation()
 
 
@@ -50,17 +54,17 @@ class _FakeDiarizer:
 
 
 class DiarizationDiagnosticTests(unittest.TestCase):
-    def config(self):
-        return WorkerConfig.from_mapping(
-            {
-                "TOOLS_API_BASE_URL": "https://tools.example.test",
-                "TOOLS_WORKER_TOKEN": "worker-secret-never-print",
-                "TOOLS_WORKER_ID": "mac-worker",
-                "TOOLS_WORKER_DIARIZATION_ENABLED": "true",
-                "TOOLS_WORKER_DIARIZATION_HF_TOKEN": "hf-secret-never-print",
-                "TOOLS_WORKER_DIARIZATION_DEVICE": "auto",
-            }
-        )
+    def config(self, **overrides):
+        values = {
+            "TOOLS_API_BASE_URL": "https://tools.example.test",
+            "TOOLS_WORKER_TOKEN": "worker-secret-never-print",
+            "TOOLS_WORKER_ID": "mac-worker",
+            "TOOLS_WORKER_DIARIZATION_ENABLED": "true",
+            "TOOLS_WORKER_DIARIZATION_HF_TOKEN": "hf-secret-never-print",
+            "TOOLS_WORKER_DIARIZATION_DEVICE": "auto",
+        }
+        values.update(overrides)
+        return WorkerConfig.from_mapping(values)
 
     def test_model_load_only_diagnostic_reports_ready_without_secrets(self):
         report = DiarizationDiagnostic(self.config(), diarizer=_FakeDiarizer()).run()
@@ -83,6 +87,22 @@ class DiarizationDiagnosticTests(unittest.TestCase):
         self.assertTrue(report["audio_checked"])
         self.assertEqual(2, report["speaker_turns"])
         self.assertEqual(2, report["speaker_count"])
+
+    def test_audio_diagnostic_uses_configured_speaker_constraints(self):
+        pipeline = _Pipeline()
+        config = self.config(
+            TOOLS_WORKER_DIARIZATION_MIN_SPEAKERS="2",
+            TOOLS_WORKER_DIARIZATION_MAX_SPEAKERS="4",
+        )
+        with tempfile.TemporaryDirectory() as root:
+            media = Path(root) / "audio.wav"
+            media.write_bytes(b"fake-audio")
+            report = DiarizationDiagnostic(config, diarizer=_FakeDiarizer(pipeline=pipeline)).run(str(media))
+
+        self.assertEqual("completed", report["status"])
+        self.assertEqual(2, report["min_speakers"])
+        self.assertEqual(4, report["max_speakers"])
+        self.assertEqual({"min_speakers": 2, "max_speakers": 4}, pipeline.calls[0][1])
 
     def test_failure_diagnostic_redacts_hf_and_worker_tokens(self):
         config = self.config()
@@ -130,6 +150,8 @@ class DiarizationDiagnosticTests(unittest.TestCase):
                     "hf_token_present": True,
                     "configured_device": "auto",
                     "resolved_device": "mps",
+                    "min_speakers": None,
+                    "max_speakers": None,
                     "supported": True,
                     "pipeline_loaded": True,
                     "audio_checked": False,
