@@ -9,7 +9,7 @@ from unittest.mock import patch
 from toolsapi_worker.api import ToolsApiClient, WhisperClaim
 from toolsapi_worker.config import WorkerConfig
 from toolsapi_worker.live_progress import MlxVerboseTranscriptCapture, timestamp_seconds
-from toolsapi_worker.runtime import FasterWhisperHandler, LeaseHeartbeat, MlxWhisperHandler
+from toolsapi_worker.runtime import FasterWhisperHandler, LeaseHeartbeat
 
 
 class FakeClient:
@@ -113,38 +113,20 @@ class LiveWhisperProgressTest(unittest.TestCase):
         self.assertEqual("Hello world", latest["transcript_text"])
         self.assertEqual(31.0, latest["segments"][0]["end"])
 
-    def test_mlx_verbose_capture_streams_segments_before_terminal_result(self):
+    def test_mlx_verbose_capture_streams_segments_incrementally(self):
         client = FakeClient()
         heartbeat = LeaseHeartbeat(client, self.claim(model="large-v3"), 0.05)
+        capture = MlxVerboseTranscriptCapture(heartbeat)
 
-        def fake_transcribe(path, **kwargs):
-            self.assertTrue(kwargs["verbose"])
-            print("Detected language: English")
-            print("[00:00.000 --> 00:04.250] First sentence")
-            print("[00:04.250 --> 00:09.500] Second sentence")
-            return {
-                "text": "First sentence Second sentence",
-                "segments": [
-                    {"start": 0.0, "end": 4.25, "text": "First sentence"},
-                    {"start": 4.25, "end": 9.5, "text": "Second sentence"},
-                ],
-                "language": "en",
-            }
-
-        with tempfile.TemporaryDirectory() as root:
-            handler = MlxWhisperHandler(
-                self.config(root, device="metal", compute="float16", models=("large-v3",)),
-                transcribe_func=fake_transcribe,
-            )
-            input_path = Path(root) / "audio.m4a"
-            input_path.write_bytes(b"fake")
-            result = handler.transcribe(self.claim(model="large-v3"), input_path, heartbeat)
+        capture.write("Detected language: English\n[00:00.000 --> 00:04.250] First")
+        capture.write(" sentence\n[00:04.250 --> 00:09.500] Second sentence\n")
+        capture.finish()
 
         snapshot = heartbeat._snapshot()
         self.assertEqual("First sentence Second sentence", snapshot.transcript_text)
         self.assertEqual(2, len(snapshot.transcript_segments))
         self.assertEqual(9.5, snapshot.transcript_segments[-1]["end"])
-        self.assertEqual("First sentence Second sentence", result.transcript_text)
+        self.assertIn("2 segments received", snapshot.stage_detail)
 
     def test_faster_whisper_publishes_segments_while_iterating(self):
         class FakeModel:
