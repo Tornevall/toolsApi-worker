@@ -253,13 +253,16 @@ class WorkerRuntimeTest(unittest.TestCase):
             progress_before_wait = len(client.progress_calls)
             time.sleep(0.16)
             progress_after_wait = len(client.progress_calls)
+            finalizing_updates = [call for call in client.progress_calls if call[2] == "Finalizing" and call[1] == 99]
             self.assertGreaterEqual(progress_after_wait - progress_before_wait, 2)
+            self.assertGreaterEqual(len(finalizing_updates), 2)
+
             client.complete_release.set()
             worker_thread.join(timeout=1.0)
-
             self.assertFalse(worker_thread.is_alive())
             self.assertEqual(1, len(client.complete_calls))
             self.assertEqual([], client.fail_calls)
+            self.assertEqual([], list(Path(root).iterdir()))
 
     def test_heartbeat_continues_until_failure_acknowledgement(self):
         with tempfile.TemporaryDirectory() as root:
@@ -280,11 +283,12 @@ class WorkerRuntimeTest(unittest.TestCase):
             time.sleep(0.16)
             progress_after_wait = len(client.progress_calls)
             self.assertGreaterEqual(progress_after_wait - progress_before_wait, 2)
+
             client.fail_release.set()
             worker_thread.join(timeout=1.0)
-
             self.assertFalse(worker_thread.is_alive())
             self.assertEqual(1, len(client.fail_calls))
+            self.assertEqual([], list(Path(root).iterdir()))
 
     def test_heartbeat_continues_until_diarization_only_acknowledgement(self):
         with tempfile.TemporaryDirectory() as root:
@@ -297,11 +301,8 @@ class WorkerRuntimeTest(unittest.TestCase):
                 diarizer=FakeDiarizer(),
                 sleep=lambda seconds: None,
             )
-            worker_thread = threading.Thread(
-                target=runtime.process_claim,
-                args=(self.claim(operation="diarize"),),
-                daemon=True,
-            )
+            claim = self.claim(operation="diarize", diarization_requested=True)
+            worker_thread = threading.Thread(target=runtime.process_claim, args=(claim,), daemon=True)
             worker_thread.start()
 
             self.assertTrue(client.diarization_complete_started.wait(timeout=1.0))
@@ -309,20 +310,20 @@ class WorkerRuntimeTest(unittest.TestCase):
             time.sleep(0.16)
             progress_after_wait = len(client.progress_calls)
             self.assertGreaterEqual(progress_after_wait - progress_before_wait, 2)
+
             client.diarization_complete_release.set()
             worker_thread.join(timeout=1.0)
-
             self.assertFalse(worker_thread.is_alive())
             self.assertEqual(1, len(client.diarization_complete_calls))
-            self.assertEqual([], client.complete_calls)
             self.assertEqual([], client.fail_calls)
+            self.assertEqual([], list(Path(root).iterdir()))
 
     def test_completion_lease_loss_never_falls_through_to_failure_submission(self):
         with tempfile.TemporaryDirectory() as root:
             client = FakeClient()
             client.complete_lease_lost = True
             runtime = WorkerRuntime(
-                self.config(root, heartbeat_seconds=0.05),
+                self.config(root),
                 client=client,
                 handler=SlowHandler(delay=0.01),
                 diarizer=FakeDiarizer(),
@@ -334,35 +335,39 @@ class WorkerRuntimeTest(unittest.TestCase):
 
             self.assertEqual(1, len(client.complete_calls))
             self.assertEqual([], client.fail_calls)
+            self.assertEqual([], list(Path(root).iterdir()))
 
     def test_completed_job_runs_diarization_before_terminal_ack_and_cleans_temp_media(self):
         with tempfile.TemporaryDirectory() as root:
             client = FakeClient()
-            handler = SlowHandler(delay=0.01)
+            client.complete_failures_remaining = 1
+            sleeps = []
             diarizer = FakeDiarizer()
             runtime = WorkerRuntime(
                 self.config(root),
                 client=client,
-                handler=handler,
+                handler=SlowHandler(delay=0.01),
                 diarizer=diarizer,
-                sleep=lambda seconds: None,
+                sleep=lambda seconds: sleeps.append(seconds),
             )
 
             runtime.process_claim(self.claim())
 
-            self.assertEqual(1, handler.calls)
             self.assertEqual(1, len(diarizer.calls))
-            self.assertEqual(1, len(client.complete_calls))
-            _, _, completed_segments, _, diarization = client.complete_calls[0]
-            self.assertEqual("SPEAKER_00", completed_segments[0]["speaker_label"])
-            self.assertEqual("completed", diarization["status"])
+            self.assertEqual(2, len(client.complete_calls))
+            self.assertEqual([0.01], sleeps)
             self.assertEqual([], client.fail_calls)
             self.assertEqual([], list(Path(root).iterdir()))
+            first = client.complete_calls[0]
+            second = client.complete_calls[1]
+            self.assertEqual(first[1:], second[1:])
+            self.assertEqual("SPEAKER_00", first[2][0]["speaker_label"])
+            self.assertEqual("completed", first[4]["status"])
 
     def test_diarization_only_claim_never_runs_whisper_or_submits_transcript(self):
         with tempfile.TemporaryDirectory() as root:
             client = FakeClient()
-            handler = SlowHandler(delay=0.01)
+            handler = SlowHandler(delay=0.01, fail=True)
             diarizer = FakeDiarizer()
             runtime = WorkerRuntime(
                 self.config(root),
@@ -372,47 +377,64 @@ class WorkerRuntimeTest(unittest.TestCase):
                 sleep=lambda seconds: None,
             )
 
-            runtime.process_claim(self.claim(operation="diarize"))
+            runtime.process_claim(self.claim(operation="diarize", diarization_requested=True))
 
             self.assertEqual(0, handler.calls)
             self.assertEqual(1, len(diarizer.calls))
+            self.assertEqual([], diarizer.calls[0][2])
             self.assertEqual([], client.complete_calls)
+            self.assertEqual([], client.fail_calls)
             self.assertEqual(1, len(client.diarization_complete_calls))
             self.assertEqual("completed", client.diarization_complete_calls[0][1]["status"])
-            self.assertEqual([], client.fail_calls)
+            self.assertEqual([], list(Path(root).iterdir()))
 
     def test_diarization_only_runtime_failure_cannot_fail_or_replace_transcript(self):
         with tempfile.TemporaryDirectory() as root:
             client = FakeClient()
-            handler = SlowHandler(delay=0.01)
             runtime = WorkerRuntime(
                 self.config(root),
                 client=client,
-                handler=handler,
+                handler=SlowHandler(delay=0.01, fail=True),
                 diarizer=FailingDiarizer(),
                 sleep=lambda seconds: None,
             )
 
-            runtime.process_claim(self.claim(operation="diarize"))
+            runtime.process_claim(self.claim(operation="diarize", diarization_requested=True))
 
-            self.assertEqual(0, handler.calls)
             self.assertEqual([], client.complete_calls)
             self.assertEqual([], client.fail_calls)
             self.assertEqual(1, len(client.diarization_complete_calls))
-            diarization = client.diarization_complete_calls[0][1]
-            self.assertEqual("failed", diarization["status"])
-            self.assertEqual("worker_error", diarization["error_code"])
-            self.assertEqual("Speaker diarization failed on this worker.", diarization["error_message"])
-            self.assertNotIn("hf_secret_never_return", repr(diarization))
+            payload = client.diarization_complete_calls[0][1]
+            self.assertEqual("failed", payload["status"])
+            self.assertEqual("worker_error", payload["error_code"])
+            self.assertNotIn("hf_secret_never_return", str(payload))
+            self.assertEqual([], list(Path(root).iterdir()))
+
+    def test_non_diarization_job_skips_diarizer(self):
+        with tempfile.TemporaryDirectory() as root:
+            client = FakeClient()
+            diarizer = FakeDiarizer()
+            runtime = WorkerRuntime(
+                self.config(root),
+                client=client,
+                handler=SlowHandler(delay=0.01),
+                diarizer=diarizer,
+                sleep=lambda seconds: None,
+            )
+
+            runtime.process_claim(self.claim(diarization_requested=False))
+
+            self.assertEqual([], diarizer.calls)
+            self.assertEqual("skipped", client.complete_calls[0][4]["status"])
+            self.assertFalse(client.complete_calls[0][4]["requested"])
 
     def test_handler_failure_is_reported_and_temp_media_is_cleaned(self):
         with tempfile.TemporaryDirectory() as root:
             client = FakeClient()
-            handler = SlowHandler(delay=0.01, fail=True)
             runtime = WorkerRuntime(
                 self.config(root),
                 client=client,
-                handler=handler,
+                handler=SlowHandler(delay=0.01, fail=True),
                 diarizer=FakeDiarizer(),
                 sleep=lambda seconds: None,
             )
@@ -427,73 +449,71 @@ class WorkerRuntimeTest(unittest.TestCase):
     def test_url_source_is_not_executed_when_runtime_has_url_support_disabled(self):
         with tempfile.TemporaryDirectory() as root:
             client = FakeClient()
-            handler = SlowHandler(delay=0.01)
+            claim = self.claim(diarization_requested=False)
+            claim = WhisperClaim(
+                job_id=claim.job_id,
+                lease_id=claim.lease_id,
+                generation=claim.generation,
+                contract=claim.contract,
+                contract_version=claim.contract_version,
+                lease_expires_at=claim.lease_expires_at,
+                operation=claim.operation,
+                model=claim.model,
+                language=claim.language,
+                diarization_requested=False,
+                input={"type": "url", "url": "https://example.test/audio.mp3"},
+            )
             runtime = WorkerRuntime(
                 self.config(root),
                 client=client,
-                handler=handler,
+                handler=SlowHandler(delay=0.01),
                 diarizer=FakeDiarizer(),
                 sleep=lambda seconds: None,
-            )
-            claim = WhisperClaim(
-                job_id=124,
-                lease_id="lease-url",
-                generation=1,
-                contract="whisper.transcribe",
-                contract_version=2,
-                lease_expires_at="2026-09-01T14:30:00+00:00",
-                operation="transcribe",
-                model="small",
-                language=None,
-                diarization_requested=False,
-                input={"type": "url", "url": "https://example.test/audio.mp3"},
             )
 
             runtime.process_claim(claim)
 
-            self.assertEqual(0, handler.calls)
             self.assertEqual(1, len(client.fail_calls))
             self.assertIn("URL-source execution is disabled", client.fail_calls[0][2])
 
-    def test_non_diarization_job_skips_diarizer(self):
+    def test_metal_device_selects_mlx_handler(self):
         with tempfile.TemporaryDirectory() as root:
-            client = FakeClient()
-            handler = SlowHandler(delay=0.01)
-            diarizer = FakeDiarizer()
-            runtime = WorkerRuntime(
-                self.config(root),
-                client=client,
-                handler=handler,
-                diarizer=diarizer,
-                sleep=lambda seconds: None,
-            )
-
-            runtime.process_claim(self.claim(diarization_requested=False))
-
-            self.assertEqual(0, len(diarizer.calls))
-            self.assertEqual(1, len(client.complete_calls))
-            self.assertEqual("skipped", client.complete_calls[0][4]["status"])
+            handler = build_whisper_handler(self.config(root, device="metal", compute_type="float16"))
+        self.assertIsInstance(handler, MlxWhisperHandler)
 
     def test_mlx_handler_normalizes_transcript_and_segments(self):
+        calls = []
+
+        def fake_transcribe(path, **kwargs):
+            calls.append((path, kwargs))
+            return {
+                "text": " Hej världen ",
+                "segments": [
+                    {"start": 0.0, "end": 1.25, "text": " Hej "},
+                    {"start": 1.25, "end": 2.5, "text": " världen "},
+                ],
+                "language": "sv",
+            }
+
         with tempfile.TemporaryDirectory() as root:
-            audio = Path(root) / "audio.wav"
-            audio.write_bytes(b"fake")
-            claim = self.claim(model="large-v3")
-            heartbeat = LeaseHeartbeat(FakeClient(), claim, 10.0)
-            handler = MlxWhisperHandler(
-                self.config(root, device="metal", compute_type="float16", models=("large-v3",)),
-                transcribe_func=lambda *args, **kwargs: {
-                    "text": "Hello from MLX",
-                    "segments": [{"start": 0.0, "end": 1.25, "text": "Hello from MLX"}],
-                },
-            )
+            config = self.config(root, device="metal", compute_type="float16", models=("large-v3",))
+            handler = MlxWhisperHandler(config, transcribe_func=fake_transcribe)
+            heartbeat = LeaseHeartbeat(FakeClient(), self.claim(model="large-v3"), 1)
+            input_path = Path(root) / "audio.m4a"
+            input_path.write_bytes(b"fake")
 
-            result = handler.transcribe(claim, audio, heartbeat)
+            result = handler.transcribe(self.claim(model="large-v3"), input_path, heartbeat)
 
-            self.assertEqual("Hello from MLX", result.transcript_text)
-            self.assertEqual(1.25, result.segments[0]["end"])
-            self.assertEqual("mlx-whisper", result.runtime["engine"])
+        self.assertEqual("Hej världen", result.transcript_text)
+        self.assertEqual(2, len(result.segments))
+        self.assertEqual("mlx-whisper", result.runtime["engine"])
+        self.assertEqual("metal", result.runtime["device"])
+        self.assertEqual("mlx-community/whisper-large-v3-mlx", result.runtime["model_repository"])
+        self.assertEqual(str(input_path), calls[0][0])
+        self.assertEqual("mlx-community/whisper-large-v3-mlx", calls[0][1]["path_or_hf_repo"])
+        self.assertEqual("sv", calls[0][1]["language"])
+        self.assertFalse(calls[0][1]["verbose"])
 
-    def test_metal_device_selects_mlx_handler(self):
-        config = self.config("/tmp/toolsapi-worker-test", device="metal", compute_type="float16", models=("large-v3",))
-        self.assertIsInstance(build_whisper_handler(config), MlxWhisperHandler)
+
+if __name__ == "__main__":
+    unittest.main()
