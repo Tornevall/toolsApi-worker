@@ -36,10 +36,14 @@ class LeaseHeartbeat:
         client: ToolsApiClient,
         claim: WhisperClaim,
         interval_seconds: float,
+        retry_seconds: float | None = None,
     ) -> None:
         self.client = client
         self.claim = claim
         self.interval_seconds = max(0.05, interval_seconds)
+        if retry_seconds is None:
+            retry_seconds = min(5.0, self.interval_seconds / 3.0)
+        self.retry_seconds = max(0.05, min(self.interval_seconds, retry_seconds))
         self.state = HeartbeatState()
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -105,30 +109,36 @@ class LeaseHeartbeat:
         )
 
     def _run(self) -> None:
-        last_sent_at = 0.0
+        last_attempt_at = 0.0
         minimum_push_interval = min(2.0, self.interval_seconds)
+        retrying = False
         while not self._stop.is_set():
-            self._wake.wait(self.interval_seconds)
+            wait_seconds = self.retry_seconds if retrying else self.interval_seconds
+            self._wake.wait(wait_seconds)
             self._wake.clear()
             if self._stop.is_set():
                 return
 
             now = time.monotonic()
-            if last_sent_at > 0:
-                remaining = minimum_push_interval - (now - last_sent_at)
+            minimum_attempt_interval = self.retry_seconds if retrying else minimum_push_interval
+            if last_attempt_at > 0:
+                remaining = minimum_attempt_interval - (now - last_attempt_at)
                 if remaining > 0 and self._stop.wait(remaining):
                     return
 
             state = self._snapshot()
+            last_attempt_at = time.monotonic()
             try:
                 self._report_snapshot(state)
-                last_sent_at = time.monotonic()
+                self._last_error = None
+                retrying = False
             except WorkerLeaseLostError as exc:
                 self._last_error = exc
                 self._lease_lost.set()
                 return
             except WorkerApiError as exc:
                 self._last_error = exc
+                retrying = True
                 continue
 
 

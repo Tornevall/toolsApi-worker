@@ -1,5 +1,6 @@
 import json
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from toolsapi_worker.api import ToolsApiClient, WhisperClaim
@@ -43,6 +44,7 @@ class TerminalAcknowledgementRetryTest(unittest.TestCase):
         )
 
         runtime = object.__new__(WorkerRuntime)
+        runtime.config = SimpleNamespace(poll_seconds=0.01)
         runtime.sleep = lambda _seconds: None
 
         requests = []
