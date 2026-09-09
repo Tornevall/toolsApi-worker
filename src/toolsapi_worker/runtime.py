@@ -46,6 +46,7 @@ class LeaseHeartbeat:
         self.retry_seconds = max(0.05, min(self.interval_seconds, retry_seconds))
         self.state = HeartbeatState()
         self._lock = threading.Lock()
+        self._dispatch_lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._lease_lost = threading.Event()
@@ -79,11 +80,15 @@ class LeaseHeartbeat:
         if self._lease_lost.is_set():
             raise WorkerLeaseLostError("ToolsAPI no longer accepts this Whisper lease") from self._last_error
 
-    def terminal_accepted(self) -> None:
-        """Stop future heartbeat/progress work after ToolsAPI accepts terminal state."""
-        self._terminal_accepted.set()
-        self._stop.set()
-        self._wake.set()
+    def submit_terminal(self, submit: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        """Serialize terminal acknowledgement against heartbeat dispatch."""
+        with self._dispatch_lock:
+            self.assert_owned()
+            response = submit()
+            self._terminal_accepted.set()
+            self._stop.set()
+            self._wake.set()
+            return response
 
     def stop(self) -> None:
         self._stop.set()
@@ -141,18 +146,21 @@ class LeaseHeartbeat:
 
             state = self._snapshot()
             last_attempt_at = time.monotonic()
-            try:
-                self._report_snapshot(state)
-                self._last_error = None
-                retrying = False
-            except WorkerLeaseLostError as exc:
-                self._last_error = exc
-                self._lease_lost.set()
-                return
-            except WorkerApiError as exc:
-                self._last_error = exc
-                retrying = True
-                continue
+            with self._dispatch_lock:
+                if self._stop.is_set() or self._terminal_accepted.is_set():
+                    return
+                try:
+                    self._report_snapshot(state)
+                    self._last_error = None
+                    retrying = False
+                except WorkerLeaseLostError as exc:
+                    self._last_error = exc
+                    self._lease_lost.set()
+                    return
+                except WorkerApiError as exc:
+                    self._last_error = exc
+                    retrying = True
+                    continue
 
 
 @dataclass(frozen=True)
@@ -554,10 +562,9 @@ class WorkerRuntime:
             if heartbeat is not None:
                 heartbeat.assert_owned()
             try:
-                response = submit()
                 if heartbeat is not None:
-                    heartbeat.terminal_accepted()
-                return response
+                    return heartbeat.submit_terminal(submit)
+                return submit()
             except WorkerLeaseLostError:
                 raise
             except WorkerApiError:
