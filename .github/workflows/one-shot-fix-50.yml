@@ -106,6 +106,8 @@ jobs:
           path.write_text(text.replace(old, new, 1))
           PY
       - name: Run focused deterministic regressions
+        env:
+          PYTHONPATH: src
         run: |
           python -m unittest \
             tests.test_runtime.WorkerRuntimeTest.test_heartbeat_continues_until_completion_acknowledgement \
