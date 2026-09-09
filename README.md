@@ -35,6 +35,8 @@ See [docs/architecture.md](docs/architecture.md) and [docs/contracts.md](docs/co
 
 While Whisper is running, workers publish bounded cumulative live transcript text and timestamped segments through the existing progress endpoint. `faster-whisper` publishes from its segment iterator; Apple Silicon MLX captures `mlx-whisper`'s incremental timestamp output without writing transcript content to local worker logs. ToolsAPI can therefore show real transcript evidence and derive progress from the latest completed audio timestamp before terminal completion.
 
+On Apple Silicon, the combined `mlx-whisper` call may still be loading or downloading the selected model and preparing the audio after the job reaches 20%. During that pre-segment phase the worker reports `Preparing MLX Whisper` rather than claiming that transcription is already producing output. The stage changes to `Transcribing` when the first timestamped transcript segment is emitted.
+
 A diarization failure does not discard a successful transcript. The worker submits the transcript together with a separate `failed` or `unavailable` diarization status so ToolsAPI can preserve the text and show the speaker-processing failure independently.
 
 The initial executable runtime is deliberately serial (`TOOLS_WORKER_CONCURRENCY=1`). Parallel execution will be added only with dedicated ownership/lifecycle coverage.
@@ -276,7 +278,7 @@ TOOLS_WORKER_DIARIZATION_DEVICE=auto
 TOOLS_WORKER_TEMP_ROOT=
 ```
 
-The heartbeat is independent from Whisper/pyannote progress and remains active through terminal acknowledgement and transient terminal retries. A worker stops refreshing the lease only after ToolsAPI accepts completion/failure or definitively rejects ownership, preventing a finished job from losing its lease while the final API response is unresolved.
+The heartbeat is independent from Whisper/pyannote progress and remains active through terminal acknowledgement and transient terminal retries. A worker stops refreshing the lease only after ToolsAPI accepts completion/failure or definitively rejects ownership, preventing a finished job from losing its lease while the final API response is unresolved. Once a terminal acknowledgement is accepted, the worker marks that lease lifecycle closed immediately and suppresses further progress updates before cleanup.
 
 Steady-state active-job heartbeat uses `TOOLS_WORKER_HEARTBEAT_SECONDS`. If an active heartbeat/progress request fails with a transient transport/API error, the worker retries the same current snapshot on a shorter bounded cadence. The default retry delay is the smaller of one third of the steady-state interval and five seconds. Only an accepted ToolsAPI report refreshes lease ownership; the worker never extends its own lease locally, and HTTP 409 remains definitive lease loss.
 
@@ -346,3 +348,4 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 - `Tornevall/toolsApi-worker#23` - Ubuntu venv bootstrap and runtime device auto-detection
 - `Tornevall/toolsApi-worker#40` - Portable local diarization diagnostics
 - `Tornevall/toolsApi-worker#45` - Active heartbeat retry before lease expiry
+- `Tornevall/toolsApi-worker#48` - Terminal heartbeat race and truthful MLX startup progress

@@ -46,9 +46,11 @@ class LeaseHeartbeat:
         self.retry_seconds = max(0.05, min(self.interval_seconds, retry_seconds))
         self.state = HeartbeatState()
         self._lock = threading.Lock()
+        self._dispatch_lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._lease_lost = threading.Event()
+        self._terminal_accepted = threading.Event()
         self._last_error: WorkerApiError | None = None
         self._thread = threading.Thread(target=self._run, name=f"whisper-heartbeat-{claim.job_id}", daemon=True)
 
@@ -56,6 +58,8 @@ class LeaseHeartbeat:
         self._thread.start()
 
     def update(self, progress_percent: int, stage_label: str, stage_detail: str) -> None:
+        if self._terminal_accepted.is_set():
+            return
         with self._lock:
             self.state.progress_percent = max(1, min(99, int(progress_percent)))
             self.state.stage_label = stage_label
@@ -63,6 +67,8 @@ class LeaseHeartbeat:
         self._wake.set()
 
     def update_transcript(self, transcript_text: str, segments: list[dict[str, Any]]) -> None:
+        if self._terminal_accepted.is_set():
+            return
         safe_text = str(transcript_text or "").strip()[:200000]
         safe_segments = [dict(segment) for segment in list(segments or [])[:5000]]
         with self._lock:
@@ -73,6 +79,16 @@ class LeaseHeartbeat:
     def assert_owned(self) -> None:
         if self._lease_lost.is_set():
             raise WorkerLeaseLostError("ToolsAPI no longer accepts this Whisper lease") from self._last_error
+
+    def submit_terminal(self, submit: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        """Serialize terminal acknowledgement against heartbeat dispatch."""
+        with self._dispatch_lock:
+            self.assert_owned()
+            response = submit()
+            self._terminal_accepted.set()
+            self._stop.set()
+            self._wake.set()
+            return response
 
     def stop(self) -> None:
         self._stop.set()
@@ -116,7 +132,7 @@ class LeaseHeartbeat:
             wait_seconds = self.retry_seconds if retrying else self.interval_seconds
             self._wake.wait(wait_seconds)
             self._wake.clear()
-            if self._stop.is_set():
+            if self._stop.is_set() or self._terminal_accepted.is_set():
                 return
 
             now = time.monotonic()
@@ -125,21 +141,26 @@ class LeaseHeartbeat:
                 remaining = minimum_attempt_interval - (now - last_attempt_at)
                 if remaining > 0 and self._stop.wait(remaining):
                     return
+            if self._terminal_accepted.is_set():
+                return
 
             state = self._snapshot()
             last_attempt_at = time.monotonic()
-            try:
-                self._report_snapshot(state)
-                self._last_error = None
-                retrying = False
-            except WorkerLeaseLostError as exc:
-                self._last_error = exc
-                self._lease_lost.set()
-                return
-            except WorkerApiError as exc:
-                self._last_error = exc
-                retrying = True
-                continue
+            with self._dispatch_lock:
+                if self._stop.is_set() or self._terminal_accepted.is_set():
+                    return
+                try:
+                    self._report_snapshot(state)
+                    self._last_error = None
+                    retrying = False
+                except WorkerLeaseLostError as exc:
+                    self._last_error = exc
+                    self._lease_lost.set()
+                    return
+                except WorkerApiError as exc:
+                    self._last_error = exc
+                    retrying = True
+                    continue
 
 
 @dataclass(frozen=True)
@@ -312,7 +333,11 @@ class MlxWhisperHandler:
         heartbeat.update(15, "Loading Whisper model", f"Loading {claim.model} with MLX on Apple Silicon.")
         heartbeat.assert_owned()
         started = time.monotonic()
-        heartbeat.update(20, "Transcribing", "MLX Whisper transcription started.")
+        heartbeat.update(
+            20,
+            "Preparing MLX Whisper",
+            f"Preparing {claim.model} with MLX; model loading/download and audio setup may continue until the first transcript segment appears.",
+        )
 
         capture = MlxVerboseTranscriptCapture(heartbeat)
         capture_verbose = self.transcribe_func is None
@@ -537,6 +562,8 @@ class WorkerRuntime:
             if heartbeat is not None:
                 heartbeat.assert_owned()
             try:
+                if heartbeat is not None:
+                    return heartbeat.submit_terminal(submit)
                 return submit()
             except WorkerLeaseLostError:
                 raise
