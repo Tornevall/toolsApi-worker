@@ -23,67 +23,73 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-
           path = Path('src/toolsapi_worker/runtime.py')
           text = path.read_text()
           text = text.replace('        self._dispatch_lock = threading.Lock()\n', '')
-          old = '''    def submit_terminal(self, submit: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-        """Serialize terminal acknowledgement against heartbeat dispatch."""
-        with self._dispatch_lock:
-            self.assert_owned()
-            response = submit()
-            self._terminal_accepted.set()
-            self._stop.set()
-            self._wake.set()
-            return response
-'''
-          new = '''    def submit_terminal(self, submit: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-        """Keep heartbeat active until terminal state is actually acknowledged."""
-        self.assert_owned()
-        response = submit()
-        self._terminal_accepted.set()
-        self._stop.set()
-        self._wake.set()
-        return response
-'''
+          old = '\n'.join([
+              '    def submit_terminal(self, submit: Callable[[], dict[str, Any]]) -> dict[str, Any]:',
+              '        """Serialize terminal acknowledgement against heartbeat dispatch."""',
+              '        with self._dispatch_lock:',
+              '            self.assert_owned()',
+              '            response = submit()',
+              '            self._terminal_accepted.set()',
+              '            self._stop.set()',
+              '            self._wake.set()',
+              '            return response',
+              '',
+          ])
+          new = '\n'.join([
+              '    def submit_terminal(self, submit: Callable[[], dict[str, Any]]) -> dict[str, Any]:',
+              '        """Keep heartbeat active until terminal state is actually acknowledged."""',
+              '        self.assert_owned()',
+              '        response = submit()',
+              '        self._terminal_accepted.set()',
+              '        self._stop.set()',
+              '        self._wake.set()',
+              '        return response',
+              '',
+          ])
           if old not in text:
               raise SystemExit('submit_terminal block not found')
           text = text.replace(old, new, 1)
-          old = '''            with self._dispatch_lock:
-                if self._stop.is_set() or self._terminal_accepted.is_set():
-                    return
-                try:
-                    self._report_snapshot(state)
-                    self._last_error = None
-                    retrying = False
-                except WorkerLeaseLostError as exc:
-                    self._last_error = exc
-                    self._lease_lost.set()
-                    return
-                except WorkerApiError as exc:
-                    self._last_error = exc
-                    retrying = True
-                    continue
-'''
-          new = '''            if self._stop.is_set() or self._terminal_accepted.is_set():
-                return
-            try:
-                self._report_snapshot(state)
-                self._last_error = None
-                retrying = False
-            except WorkerLeaseLostError as exc:
-                self._last_error = exc
-                self._lease_lost.set()
-                return
-            except WorkerApiError as exc:
-                self._last_error = exc
-                retrying = True
-                continue
-'''
+          old = '\n'.join([
+              '            with self._dispatch_lock:',
+              '                if self._stop.is_set() or self._terminal_accepted.is_set():',
+              '                    return',
+              '                try:',
+              '                    self._report_snapshot(state)',
+              '                    self._last_error = None',
+              '                    retrying = False',
+              '                except WorkerLeaseLostError as exc:',
+              '                    self._last_error = exc',
+              '                    self._lease_lost.set()',
+              '                    return',
+              '                except WorkerApiError as exc:',
+              '                    self._last_error = exc',
+              '                    retrying = True',
+              '                    continue',
+              '',
+          ])
+          new = '\n'.join([
+              '            if self._stop.is_set() or self._terminal_accepted.is_set():',
+              '                return',
+              '            try:',
+              '                self._report_snapshot(state)',
+              '                self._last_error = None',
+              '                retrying = False',
+              '            except WorkerLeaseLostError as exc:',
+              '                self._last_error = exc',
+              '                self._lease_lost.set()',
+              '                return',
+              '            except WorkerApiError as exc:',
+              '                self._last_error = exc',
+              '                retrying = True',
+              '                continue',
+              '',
+          ])
           if old not in text:
               raise SystemExit('heartbeat dispatch block not found')
           path.write_text(text.replace(old, new, 1))
-
           path = Path('docs/contracts.md')
           text = path.read_text()
           needle = 'The same independent heartbeat remains active while a terminal completion, failure, or diarization result is awaiting acknowledgement or retry. The worker stops it only after ToolsAPI accepts terminal state or definitively rejects the lease, so a transient terminal HTTP/network failure cannot create a lease-expiry gap after expensive processing has finished.\n'
@@ -91,7 +97,6 @@ jobs:
           if needle not in text:
               raise SystemExit('contract insertion point not found')
           path.write_text(text.replace(needle, addition, 1))
-
           path = Path('CHANGELOG.md')
           text = path.read_text()
           old = '- Stop future Whisper heartbeat/progress updates immediately after ToolsAPI accepts a terminal completion/failure acknowledgement, while keeping the independent heartbeat alive throughout unresolved terminal retries. This narrows the post-terminal lease-race window that could produce a follow-up HTTP 409 after a successful terminal submission. Fixes #48.\n'
