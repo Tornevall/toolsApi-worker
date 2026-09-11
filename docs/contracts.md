@@ -122,6 +122,8 @@ A transient heartbeat/progress transport failure does not grant or extend owners
 
 The same independent heartbeat remains active while a terminal completion, failure, or diarization result is awaiting acknowledgement or retry. The worker stops it only after ToolsAPI accepts terminal state or definitively rejects the lease, so a transient terminal HTTP/network failure cannot create a lease-expiry gap after expensive processing has finished.
 
+Because heartbeat and terminal HTTP requests are independent, a progress request can already be in flight when ToolsAPI accepts terminal state. The worker stops initiating new heartbeat reports as soon as that acknowledgement returns, while ToolsAPI treats a late progress request from the same worker, lease id and generation as an accepted-terminal no-op. This preserves lease freshness while acknowledgement is unresolved without allowing a late progress packet to reopen or mutate terminal state.
+
 The worker host itself is a continuously running service/daemon around this poll loop. Windows uses a native Windows service, Linux uses systemd and macOS uses launchd. Task Scheduler is not the worker execution model.
 
 ## Transcript completion
