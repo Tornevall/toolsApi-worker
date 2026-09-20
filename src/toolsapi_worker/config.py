@@ -80,6 +80,7 @@ class WorkerConfig:
     temp_root: str
     openai_api_key: str = ""
     openai_timeout_seconds: float = 180.0
+    job_search_concurrency: int = 4
 
     @classmethod
     def from_environment(cls) -> "WorkerConfig":
@@ -118,6 +119,7 @@ class WorkerConfig:
             enabled_handlers=handlers,
             openai_api_key=env("TOOLS_WORKER_OPENAI_API_KEY").strip(),
             openai_timeout_seconds=max(5.0, float(env("TOOLS_WORKER_OPENAI_TIMEOUT_SECONDS", "180"))),
+            job_search_concurrency=max(1, min(8, int(env("TOOLS_WORKER_JOB_SEARCH_CONCURRENCY", "4")))),
             whisper_models=models,
             whisper_device=env("TOOLS_WORKER_WHISPER_DEVICE", "cpu").strip().lower() or "cpu",
             whisper_compute_type=env("TOOLS_WORKER_WHISPER_COMPUTE_TYPE", "int8").strip() or "int8",
@@ -159,6 +161,8 @@ class WorkerConfig:
 
         if "job_search.search" in self.enabled_handlers and not self.openai_api_key:
             raise ValueError("TOOLS_WORKER_OPENAI_API_KEY is required when job_search.search is enabled")
+        if self.job_search_concurrency < 1 or self.job_search_concurrency > 8:
+            raise ValueError("TOOLS_WORKER_JOB_SEARCH_CONCURRENCY must be between 1 and 8")
 
         if "whisper.transcribe" in self.enabled_handlers:
             missing_models = [model for model in COMMON_WHISPER_MODELS if model not in self.whisper_models]
