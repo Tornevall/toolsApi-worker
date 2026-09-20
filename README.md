@@ -349,3 +349,9 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 - `Tornevall/toolsApi-worker#40` - Portable local diarization diagnostics
 - `Tornevall/toolsApi-worker#45` - Active heartbeat retry before lease expiry
 - `Tornevall/toolsApi-worker#48` - Terminal heartbeat race and truthful MLX startup progress
+
+## Job Search workload
+
+Enable `job_search.search` in `TOOLS_WORKER_ENABLED_HANDLERS` to let this worker execute ToolsAPI-prepared OpenAI Job Search requests. Job Search and Whisper use independent polling/execution loops, so a long transcription does not occupy the Job Search slot.
+
+The worker uses its normal ToolsAPI worker credential for claims and lease updates. OpenAI provider configuration is local to the worker host through `TOOLS_WORKER_OPENAI_API_KEY`; user/profile authorization and AI Credit eligibility remain server-side in ToolsAPI.
