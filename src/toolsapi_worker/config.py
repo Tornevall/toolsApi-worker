@@ -65,8 +65,6 @@ class WorkerConfig:
     poll_seconds: float
     heartbeat_seconds: float
     enabled_handlers: tuple[str, ...]
-    openai_api_key: str
-    openai_timeout_seconds: float
     whisper_models: tuple[str, ...]
     whisper_device: str
     whisper_compute_type: str
@@ -80,6 +78,8 @@ class WorkerConfig:
     diarization_max_speakers: int | None
     diarization_device: str
     temp_root: str
+    openai_api_key: str = ""
+    openai_timeout_seconds: float = 180.0
 
     @classmethod
     def from_environment(cls) -> "WorkerConfig":
