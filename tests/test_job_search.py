@@ -151,9 +151,45 @@ class OpenAiJobSearchHandlerTest(unittest.TestCase):
         self.assertEqual(30, captured["timeout"])
         self.assertEqual("find jobs", captured["payload"]["input"])
 
+    def test_incomplete_provider_response_is_returned_to_toolsapi_for_policy_handling(self):
+        claim = JobSearchClaim(
+            job_id=1,
+            lease_id="lease",
+            generation=1,
+            contract="job_search.search",
+            contract_version=1,
+            lease_expires_at="2026-09-20T12:00:00+02:00",
+            provider_request_id="stable-request",
+            request_payload={
+                "model": "gpt-5.6-sol",
+                "input": "find jobs",
+                "tools": [{"type": "web_search"}],
+            },
+        )
+        handler = OpenAiJobSearchHandler(
+            _config(),
+            opener=lambda *args, **kwargs: _Response({
+                "id": "resp_incomplete",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [{"type": "message", "content": []}],
+                "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+            }),
+        )
+
+        result = handler.execute(claim)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("incomplete", result["data"]["status"])
+        self.assertEqual("max_output_tokens", result["data"]["incomplete_details"]["reason"])
+
     def test_provider_error_redacts_worker_openai_key(self):
         key = "openai-worker-secret"
-        raw = json.dumps({"error": {"message": f"credential {key} was rejected"}}).encode("utf-8")
+        raw = json.dumps({
+            "error": {
+                "message": ("x" * 490) + key + " was rejected",
+            },
+        }).encode("utf-8")
         error = urllib.error.HTTPError(
             "https://api.openai.com/v1/responses",
             401,
@@ -176,8 +212,11 @@ class OpenAiJobSearchHandlerTest(unittest.TestCase):
         with self.assertRaises(OpenAiJobSearchError) as caught:
             handler.execute(claim)
 
-        self.assertNotIn(key, str(caught.exception))
-        self.assertIn("[redacted]", str(caught.exception))
+        message = str(caught.exception)
+        self.assertNotIn(key, message)
+        self.assertNotIn(key[:10], message)
+        self.assertIn("[redacted]", message)
+        self.assertLessEqual(len(message), 500)
 
 
 class IndependentWorkloadRuntimeTest(unittest.TestCase):
