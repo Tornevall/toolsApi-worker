@@ -232,3 +232,9 @@ Python 3.10 or newer is required on every supported platform. Windows service in
 ## Compatibility
 
 Contract version 2 remains the current wire contract and existing API route paths remain unchanged and unversioned. Live transcript progress is additive to the existing progress payload; older ToolsAPI deployments ignore none of the required terminal semantics, while current ToolsAPI persists the optional live fields when present. The uniform-worker change tightens production runtime prerequisites and remote source staging without adding a new URL or route namespace. Version 1 workers must not claim version 2 jobs.
+
+## `job_search.search` contract v1
+
+The worker polls `POST /api/job-search/worker/claim` with contract version 1 and provider `openai`. A claim contains `job_id`, opaque `lease_id`, `generation`, expiry, a stable `provider_request_id` and the normalized OpenAI Responses request payload.
+
+Progress, completion and failure use the same lease id and generation. A stale/superseded lease must fail closed. Completion returns the provider response only; ToolsAPI performs all Job Search parsing, deterministic verification, storage and notification work after durable acceptance.
