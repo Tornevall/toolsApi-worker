@@ -130,3 +130,11 @@ Update README and CHANGELOG with user-visible, operational or contract changes. 
 - Do not log secrets or raw credentials.
 - Keep raw URL-source fetching disabled in the worker runtime; ToolsAPI owns source staging and verification.
 - Remove temporary job inputs according to the ownership/retention rules above.
+
+## Job Search runtime
+
+- `job_search.search` is a separate workload slot from `whisper.transcribe`. One workload must never block polling or execution of the other.
+- Job Search claims contain a ToolsAPI-prepared OpenAI Responses payload and a stable provider request id. The worker must not implement profile, billing, parsing, verification or persistence policy locally.
+- Worker authentication is only the ToolsAPI lease credential. User ownership and AI Credit authorization are decided by ToolsAPI before claim.
+- The OpenAI provider credential is host-local runtime configuration and must never be returned to ToolsAPI or included in logs, progress or terminal errors.
+- Keep terminal acknowledgement idempotent and keep the Job Search heartbeat active until accepted completion or definitive lease loss.

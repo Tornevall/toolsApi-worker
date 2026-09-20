@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .api import (
+    JobSearchClaim,
     ToolsApiClient,
     WhisperClaim,
     WorkerApiError,
@@ -18,6 +19,7 @@ from .api import (
 )
 from .config import WorkerConfig
 from .diarization import PyannoteDiarizer
+from .job_search import OpenAiJobSearchError, OpenAiJobSearchHandler
 from .live_progress import MlxVerboseTranscriptCapture
 
 
@@ -407,6 +409,97 @@ def build_whisper_handler(config: WorkerConfig) -> FasterWhisperHandler | MlxWhi
     return FasterWhisperHandler(config)
 
 
+class JobSearchLeaseHeartbeat:
+    def __init__(
+        self,
+        client: ToolsApiClient,
+        claim: JobSearchClaim,
+        interval_seconds: float,
+        retry_seconds: float | None = None,
+    ) -> None:
+        self.client = client
+        self.claim = claim
+        self.interval_seconds = max(0.05, interval_seconds)
+        if retry_seconds is None:
+            retry_seconds = min(5.0, self.interval_seconds / 3.0)
+        self.retry_seconds = max(0.05, min(self.interval_seconds, retry_seconds))
+        self.progress_percent = 1
+        self.stage_label = "Remote Job Search worker"
+        self.stage_detail = "Preparing provider request."
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._lease_lost = threading.Event()
+        self._terminal_accepted = threading.Event()
+        self._last_error: WorkerApiError | None = None
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"job-search-heartbeat-{claim.job_id}",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def update(self, progress_percent: int, stage_label: str, stage_detail: str) -> None:
+        if self._terminal_accepted.is_set():
+            return
+        with self._lock:
+            self.progress_percent = max(1, min(99, int(progress_percent)))
+            self.stage_label = stage_label
+            self.stage_detail = stage_detail
+        self._wake.set()
+
+    def assert_owned(self) -> None:
+        if self._lease_lost.is_set():
+            raise WorkerLeaseLostError("ToolsAPI no longer accepts this Job Search lease") from self._last_error
+
+    def submit_terminal(self, submit: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        self.assert_owned()
+        response = submit()
+        self._terminal_accepted.set()
+        self._stop.set()
+        self._wake.set()
+        return response
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._wake.set()
+        self._thread.join(timeout=self.interval_seconds + 1)
+
+    def _snapshot(self) -> tuple[int, str, str]:
+        with self._lock:
+            return self.progress_percent, self.stage_label, self.stage_detail
+
+    def _run(self) -> None:
+        retrying = False
+        while not self._stop.is_set():
+            wait_seconds = self.retry_seconds if retrying else self.interval_seconds
+            self._wake.wait(wait_seconds)
+            self._wake.clear()
+            if self._stop.is_set() or self._terminal_accepted.is_set():
+                return
+
+            progress, label, detail = self._snapshot()
+            try:
+                self.client.report_job_search_progress(
+                    self.claim,
+                    progress,
+                    label,
+                    detail,
+                )
+                retrying = False
+                self._last_error = None
+            except (WorkerLeaseLostError, WorkerAuthenticationError) as exc:
+                self._last_error = exc
+                self._lease_lost.set()
+                self._stop.set()
+                return
+            except WorkerApiError as exc:
+                self._last_error = exc
+                retrying = True
+
+
 class WorkerRuntime:
     def __init__(
         self,
@@ -414,6 +507,7 @@ class WorkerRuntime:
         client: ToolsApiClient | None = None,
         handler: Any | None = None,
         diarizer: Any | None = None,
+        job_search_handler: Any | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.config = config
@@ -424,19 +518,71 @@ class WorkerRuntime:
         )
         self.handler = handler or build_whisper_handler(config)
         self.diarizer = diarizer or PyannoteDiarizer(config)
+        self.job_search_handler = job_search_handler or OpenAiJobSearchHandler(config)
         self.sleep = sleep
 
-    def run_forever(self) -> None:
+    def run_forever(self, stop_event: threading.Event | None = None) -> None:
         self.config.validate_protocol_configuration()
-        validate_whisper_runtime_device(self.config)
-        if "whisper.transcribe" in self.config.enabled_handlers and not bool(
-            getattr(self.diarizer, "supported", False)
-        ):
-            raise RuntimeError(
-                "The common Whisper worker runtime requires working speaker diarization before live claims start."
-            )
+        stop = stop_event or threading.Event()
 
-        while True:
+        if "whisper.transcribe" in self.config.enabled_handlers:
+            validate_whisper_runtime_device(self.config)
+            if not bool(getattr(self.diarizer, "supported", False)):
+                raise RuntimeError(
+                    "The common Whisper worker runtime requires working speaker diarization before live claims start."
+                )
+
+        loops: list[tuple[str, Callable[[threading.Event], None]]] = []
+        if "whisper.transcribe" in self.config.enabled_handlers:
+            loops.append(("whisper.transcribe", self._run_whisper_loop))
+        if "job_search.search" in self.config.enabled_handlers:
+            for slot in range(1, self.config.job_search_concurrency + 1):
+                loops.append((f"job_search.search.{slot}", self._run_job_search_loop))
+        if not loops:
+            raise RuntimeError("No enabled worker handlers are configured.")
+
+        if len(loops) == 1:
+            loops[0][1](stop)
+            return
+
+        errors: list[BaseException] = []
+        error_lock = threading.Lock()
+
+        def guarded(name: str, loop: Callable[[threading.Event], None]) -> None:
+            try:
+                loop(stop)
+            except BaseException as exc:
+                with error_lock:
+                    errors.append(exc)
+                stop.set()
+
+        threads = [
+            threading.Thread(
+                target=guarded,
+                args=(name, loop),
+                name=f"toolsapi-worker-{name.replace('.', '-')}",
+                daemon=True,
+            )
+            for name, loop in loops
+        ]
+        for thread in threads:
+            thread.start()
+
+        while any(thread.is_alive() for thread in threads):
+            if errors:
+                break
+            for thread in threads:
+                thread.join(timeout=0.1)
+
+        stop.set()
+        for thread in threads:
+            thread.join(timeout=max(1.0, self.config.poll_seconds + 1.0))
+
+        if errors:
+            raise errors[0]
+
+    def _run_whisper_loop(self, stop: threading.Event) -> None:
+        while not stop.is_set():
             try:
                 claim = self.client.claim_whisper(
                     models=self.config.whisper_models,
@@ -448,17 +594,93 @@ class WorkerRuntime:
             except WorkerAuthenticationError:
                 raise
             except WorkerApiError:
-                self.sleep(self.config.poll_seconds)
+                self._wait_for_poll(stop)
                 continue
 
             if claim is None:
-                self.sleep(self.config.poll_seconds)
+                self._wait_for_poll(stop)
                 continue
 
             try:
                 self.process_claim(claim)
             except WorkerLeaseLostError:
                 continue
+
+    def _run_job_search_loop(self, stop: threading.Event) -> None:
+        while not stop.is_set():
+            try:
+                claim = self.client.claim_job_search()
+            except WorkerAuthenticationError:
+                raise
+            except WorkerApiError:
+                self._wait_for_poll(stop)
+                continue
+
+            if claim is None:
+                self._wait_for_poll(stop)
+                continue
+
+            try:
+                self.process_job_search_claim(claim)
+            except WorkerLeaseLostError:
+                continue
+
+    def _wait_for_poll(self, stop: threading.Event) -> None:
+        if stop.is_set():
+            return
+        if stop.wait(self.config.poll_seconds):
+            return
+
+    def process_job_search_claim(self, claim: JobSearchClaim) -> None:
+        heartbeat = JobSearchLeaseHeartbeat(
+            self.client,
+            claim,
+            self.config.heartbeat_seconds,
+        )
+        heartbeat.start()
+
+        try:
+            heartbeat.update(
+                10,
+                "OpenAI web search",
+                "Submitting the ToolsAPI-prepared Job Search request to OpenAI.",
+            )
+            heartbeat.assert_owned()
+            response = self.job_search_handler.execute(claim)
+            heartbeat.assert_owned()
+            heartbeat.update(
+                99,
+                "Finalizing",
+                "Submitting the provider response to ToolsAPI for parsing and verification.",
+            )
+            self._retry_terminal(
+                lambda: self.client.complete_job_search(claim, response),
+                heartbeat,
+            )
+        except WorkerLeaseLostError:
+            raise
+        except OpenAiJobSearchError as exc:
+            self._retry_terminal(
+                lambda: self.client.fail_job_search(
+                    claim,
+                    exc.error_code,
+                    str(exc)[:500],
+                    retryable=exc.retryable,
+                ),
+                heartbeat,
+            )
+        except Exception:
+            self._retry_terminal(
+                lambda: self.client.fail_job_search(
+                    claim,
+                    "worker_error",
+                    "Job Search provider execution failed on this worker.",
+                    retryable=True,
+                ),
+                heartbeat,
+            )
+        finally:
+            heartbeat.stop()
 
     def process_claim(self, claim: WhisperClaim) -> None:
         temp_root = Path(self.config.temp_root)
@@ -553,7 +775,7 @@ class WorkerRuntime:
     def _retry_terminal(
         self,
         submit: Callable[[], dict[str, Any]],
-        heartbeat: LeaseHeartbeat | None = None,
+        heartbeat: LeaseHeartbeat | JobSearchLeaseHeartbeat | None = None,
     ) -> dict[str, Any]:
         while True:
             if heartbeat is not None:

@@ -88,3 +88,7 @@ Execution is platform-specific behind the same workload semantics and worker lif
 - Apple Silicon macOS: `mlx-whisper` for transcription plus pyannote for speaker diarization.
 
 Backend selection changes performance characteristics, not lease ownership, model/source semantics, diarization availability, retry or terminal acknowledgement rules.
+
+## Independent workload lanes
+
+The runtime now has separate continuous loops for Whisper and Job Search when both handlers are enabled. Each lane remains serial internally, but the two workload classes can be busy at the same time. This preserves the existing one-Whisper-job ownership rule while preventing long media/model work from blocking OpenAI Job Search polling.

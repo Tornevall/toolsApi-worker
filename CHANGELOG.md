@@ -1,3 +1,10 @@
+## 0.2.0.dev0 - 2026-09-20
+
+- Added the independent `job_search.search` workload for ToolsAPI-prepared OpenAI Responses/web-search requests.
+- Job Search and Whisper now poll and execute in separate workload lanes while remaining serial inside each workload.
+- Added Job Search lease heartbeat, idempotent completion/failure calls, stable OpenAI idempotency keys, provider error redaction and focused runtime/API tests.
+- Added local OpenAI provider configuration without exposing provider credentials through the ToolsAPI worker protocol.
+
 # Changelog
 
 All notable changes to toolsApi-worker are documented here.
