@@ -70,7 +70,7 @@ class OpenAiJobSearchHandler:
                 raw = exc.read().decode("utf-8")
             except Exception:
                 raw = ""
-            message = self._provider_error_message(raw, exc.code).replace(api_key, "[redacted]")
+            message = self._provider_error_message(raw, exc.code, api_key)
             raise OpenAiJobSearchError(
                 message,
                 error_code="openai_http_error",
@@ -108,17 +108,6 @@ class OpenAiJobSearchHandler:
                 retryable=False,
             )
 
-        response_status = str(data.get("status") or "").strip().lower()
-        if response_status and response_status != "completed":
-            reason = str(((data.get("incomplete_details") or {}) if isinstance(data.get("incomplete_details"), dict) else {}).get("reason") or "").strip()
-            suffix = f" ({reason})" if reason else ""
-            raise OpenAiJobSearchError(
-                f"OpenAI Responses API returned status {response_status}{suffix}.",
-                error_code="openai_incomplete_response",
-                status_code=status,
-                retryable=response_status in {"queued", "in_progress"},
-            )
-
         return {
             "ok": True,
             "status": status,
@@ -152,7 +141,7 @@ class OpenAiJobSearchHandler:
             )
 
     @staticmethod
-    def _provider_error_message(raw: str, status: int) -> str:
+    def _provider_error_message(raw: str, status: int, secret: str = "") -> str:
         message = ""
         if raw:
             try:
@@ -166,4 +155,9 @@ class OpenAiJobSearchHandler:
 
         if not message:
             message = f"OpenAI request failed with HTTP {status}."
+
+        secret = secret.strip()
+        if secret:
+            message = message.replace(secret, "[redacted]")
+
         return message[:500]
