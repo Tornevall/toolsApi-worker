@@ -22,6 +22,18 @@ class WorkerLeaseLostError(WorkerApiError):
 
 
 @dataclass(frozen=True)
+class JobSearchClaim:
+    job_id: int
+    lease_id: str
+    generation: int
+    contract: str
+    contract_version: int
+    lease_expires_at: str
+    provider_request_id: str
+    request_payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class WhisperClaim:
     job_id: int
     lease_id: str
@@ -43,6 +55,7 @@ class WhisperClaim:
 class ToolsApiClient:
     CONTRACT_VERSION = 2
     CLAIM_POLICY_VERSION = 2
+    JOB_SEARCH_CONTRACT_VERSION = 1
 
     def __init__(
         self,
@@ -131,6 +144,124 @@ class ToolsApiClient:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise WorkerApiError("ToolsAPI returned an incomplete Whisper claim payload") from exc
+
+    def claim_job_search(self) -> JobSearchClaim | None:
+        payload = self._request_json(
+            "POST",
+            "/api/job-search/worker/claim",
+            {
+                "contract_version": self.JOB_SEARCH_CONTRACT_VERSION,
+                "provider": "openai",
+            },
+        )
+
+        job = payload.get("job")
+        if job is None:
+            return None
+        if not isinstance(job, dict):
+            raise WorkerApiError("ToolsAPI returned an invalid Job Search claim payload")
+
+        contract = str(job.get("contract") or job.get("handler") or "")
+        contract_version = int(job.get("contract_version") or 0)
+        if contract != "job_search.search" or contract_version != self.JOB_SEARCH_CONTRACT_VERSION:
+            raise WorkerApiError(
+                f"Unsupported Job Search worker contract {contract!r} version {contract_version}"
+            )
+
+        request_payload = job.get("request")
+        if not isinstance(request_payload, dict):
+            raise WorkerApiError("ToolsAPI returned a Job Search claim without a provider request")
+
+        provider_request_id = str(job.get("provider_request_id") or "").strip()
+        if not provider_request_id:
+            raise WorkerApiError("ToolsAPI returned a Job Search claim without a provider request id")
+
+        try:
+            return JobSearchClaim(
+                job_id=int(job["job_id"]),
+                lease_id=str(job["lease_id"]),
+                generation=int(job["generation"]),
+                contract=contract,
+                contract_version=contract_version,
+                lease_expires_at=str(job["lease_expires_at"]),
+                provider_request_id=provider_request_id,
+                request_payload=dict(request_payload),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise WorkerApiError("ToolsAPI returned an incomplete Job Search claim payload") from exc
+
+    def report_job_search_progress(
+        self,
+        claim: JobSearchClaim,
+        progress_percent: int,
+        stage_label: str | None = None,
+        stage_detail: str | None = None,
+    ) -> dict[str, Any]:
+        if progress_percent < 0 or progress_percent > 99:
+            raise ValueError("progress_percent must be between 0 and 99")
+
+        body: dict[str, Any] = {
+            "lease_id": claim.lease_id,
+            "generation": claim.generation,
+            "progress_percent": progress_percent,
+        }
+        if stage_label:
+            body["stage_label"] = stage_label
+        if stage_detail:
+            body["stage_detail"] = stage_detail
+
+        payload = self._request_json(
+            "POST",
+            f"/api/job-search/worker/jobs/{claim.job_id}/progress",
+            body,
+        )
+        job = payload.get("job")
+        if not isinstance(job, dict):
+            raise WorkerApiError("ToolsAPI returned an invalid Job Search progress response")
+        return job
+
+    def complete_job_search(
+        self,
+        claim: JobSearchClaim,
+        provider_response: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = self._request_json(
+            "POST",
+            f"/api/job-search/worker/jobs/{claim.job_id}/complete",
+            {
+                "lease_id": claim.lease_id,
+                "generation": claim.generation,
+                "provider_response": dict(provider_response),
+            },
+        )
+        if payload.get("accepted") is not True:
+            raise WorkerApiError("ToolsAPI did not acknowledge the Job Search completion")
+        return payload
+
+    def fail_job_search(
+        self,
+        claim: JobSearchClaim,
+        error_code: str,
+        message: str,
+        retryable: bool = True,
+    ) -> dict[str, Any]:
+        if not error_code.strip() or not message.strip():
+            raise ValueError("error_code and message are required")
+
+        payload = self._request_json(
+            "POST",
+            f"/api/job-search/worker/jobs/{claim.job_id}/fail",
+            {
+                "lease_id": claim.lease_id,
+                "generation": claim.generation,
+                "error_code": error_code,
+                "message": message,
+                "retryable": bool(retryable),
+            },
+        )
+        if payload.get("accepted") is not True:
+            raise WorkerApiError("ToolsAPI did not acknowledge the Job Search failure")
+        return payload
 
     def report_whisper_progress(
         self,
@@ -350,6 +481,6 @@ class ToolsApiClient:
             ) from exc
         if exc.code == 409:
             raise WorkerLeaseLostError(
-                "ToolsAPI rejected the current Whisper lease or terminal payload; stop processing this job"
+                "ToolsAPI rejected the current worker lease or terminal payload; stop processing this job"
             ) from exc
         raise WorkerApiError(f"ToolsAPI worker request failed with HTTP {exc.code}") from exc
