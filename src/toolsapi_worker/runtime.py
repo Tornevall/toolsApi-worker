@@ -536,7 +536,8 @@ class WorkerRuntime:
         if "whisper.transcribe" in self.config.enabled_handlers:
             loops.append(("whisper.transcribe", self._run_whisper_loop))
         if "job_search.search" in self.config.enabled_handlers:
-            loops.append(("job_search.search", self._run_job_search_loop))
+            for slot in range(1, self.config.job_search_concurrency + 1):
+                loops.append((f"job_search.search.{slot}", self._run_job_search_loop))
         if not loops:
             raise RuntimeError("No enabled worker handlers are configured.")
 
