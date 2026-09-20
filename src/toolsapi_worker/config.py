@@ -65,6 +65,8 @@ class WorkerConfig:
     poll_seconds: float
     heartbeat_seconds: float
     enabled_handlers: tuple[str, ...]
+    openai_api_key: str
+    openai_timeout_seconds: float
     whisper_models: tuple[str, ...]
     whisper_device: str
     whisper_compute_type: str
@@ -114,6 +116,8 @@ class WorkerConfig:
             poll_seconds=poll_seconds,
             heartbeat_seconds=heartbeat_seconds,
             enabled_handlers=handlers,
+            openai_api_key=env("TOOLS_WORKER_OPENAI_API_KEY").strip(),
+            openai_timeout_seconds=max(5.0, float(env("TOOLS_WORKER_OPENAI_TIMEOUT_SECONDS", "180"))),
             whisper_models=models,
             whisper_device=env("TOOLS_WORKER_WHISPER_DEVICE", "cpu").strip().lower() or "cpu",
             whisper_compute_type=env("TOOLS_WORKER_WHISPER_COMPUTE_TYPE", "int8").strip() or "int8",
@@ -146,6 +150,16 @@ class WorkerConfig:
         if missing:
             raise ValueError("Missing worker configuration: " + ", ".join(missing))
 
+        unknown_handlers = [
+            handler for handler in self.enabled_handlers
+            if handler not in {"whisper.transcribe", "job_search.search"}
+        ]
+        if unknown_handlers:
+            raise ValueError("Unsupported worker handler(s): " + ", ".join(unknown_handlers))
+
+        if "job_search.search" in self.enabled_handlers and not self.openai_api_key:
+            raise ValueError("TOOLS_WORKER_OPENAI_API_KEY is required when job_search.search is enabled")
+
         if "whisper.transcribe" in self.enabled_handlers:
             missing_models = [model for model in COMMON_WHISPER_MODELS if model not in self.whisper_models]
             if missing_models:
@@ -162,7 +176,7 @@ class WorkerConfig:
                 )
 
         if self.concurrency != 1:
-            raise ValueError("TOOLS_WORKER_CONCURRENCY must remain 1 until parallel runtime support is implemented")
+            raise ValueError("TOOLS_WORKER_CONCURRENCY must remain 1 per workload until same-workload parallelism is implemented")
 
         if self.diarization_provider != "pyannote":
             raise ValueError("TOOLS_WORKER_DIARIZATION_PROVIDER must currently be pyannote")
