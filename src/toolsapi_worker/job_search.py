@@ -70,7 +70,7 @@ class OpenAiJobSearchHandler:
                 raw = exc.read().decode("utf-8")
             except Exception:
                 raw = ""
-            message = self._provider_error_message(raw, exc.code)
+            message = self._provider_error_message(raw, exc.code).replace(api_key, "[redacted]")
             raise OpenAiJobSearchError(
                 message,
                 error_code="openai_http_error",
