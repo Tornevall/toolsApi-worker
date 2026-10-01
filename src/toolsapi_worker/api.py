@@ -45,8 +45,8 @@ class WhisperClaim:
     model: str
     language: str
     diarization_requested: bool
-    diarization_debug: bool
     input: dict[str, Any]
+    diarization_debug: bool = False
 
     @property
     def input_type(self) -> str:
