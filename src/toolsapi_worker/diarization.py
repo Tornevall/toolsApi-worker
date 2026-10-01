@@ -77,7 +77,8 @@ class PyannoteDiarizer:
             if self.config.diarization_max_speakers is not None:
                 kwargs["max_speakers"] = self.config.diarization_max_speakers
 
-            output = pipeline(str(input_path), **kwargs)
+            with input_path.open("rb") as audio_stream:
+                output = pipeline(audio_stream, **kwargs)
             heartbeat.assert_owned()
             annotation = getattr(output, "speaker_diarization", output)
             if not hasattr(annotation, "itertracks"):
