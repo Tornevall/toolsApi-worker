@@ -26,8 +26,15 @@ class NeverClaimClient:
 
 
 class StaticDiarizer:
-    def __init__(self, supported=True):
+    def __init__(self, supported=True, audio_runtime_error=None):
         self.supported = supported
+        self.audio_runtime_error = audio_runtime_error
+        self.audio_runtime_validated = False
+
+    def validate_audio_runtime(self):
+        if self.audio_runtime_error is not None:
+            raise self.audio_runtime_error
+        self.audio_runtime_validated = True
 
 
 class WorkerRuntimePreflightTest(unittest.TestCase):
@@ -99,6 +106,21 @@ class WorkerRuntimePreflightTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "synthetic CUDA preflight failure"):
                     runtime.run_forever()
+
+    def test_run_forever_rejects_broken_torchcodec_audio_runtime_before_claim(self):
+        with tempfile.TemporaryDirectory() as root:
+            diarizer = StaticDiarizer(
+                True,
+                RuntimeError("TorchCodec audio runtime validation failed"),
+            )
+            runtime = WorkerRuntime(
+                self.config(root, whisper_device="cpu", compute_type="int8", diarization_device="cpu"),
+                client=NeverClaimClient(),
+                handler=object(),
+                diarizer=diarizer,
+            )
+            with self.assertRaisesRegex(RuntimeError, "TorchCodec audio runtime validation failed"):
+                runtime.run_forever()
 
     def test_run_forever_rejects_any_unavailable_diarization_runtime_before_claim(self):
         with tempfile.TemporaryDirectory() as root:
