@@ -527,6 +527,9 @@ class WorkerRuntime:
 
         if "whisper.transcribe" in self.config.enabled_handlers:
             validate_whisper_runtime_device(self.config)
+            validate_audio_runtime = getattr(self.diarizer, "validate_audio_runtime", None)
+            if callable(validate_audio_runtime):
+                validate_audio_runtime()
             if not bool(getattr(self.diarizer, "supported", False)):
                 raise RuntimeError(
                     "The common Whisper worker runtime requires working speaker diarization before live claims start."
