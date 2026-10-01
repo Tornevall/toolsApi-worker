@@ -184,7 +184,7 @@ The recommended entry point is simply:
 start.bat
 ```
 
-`start.bat` detects whether it is elevated and, when needed, relaunches itself through the normal Windows UAC prompt. It then runs `git pull --ff-only` and invokes the PowerShell installer. You therefore do not need to open an Administrator terminal manually; UAC approval is still required for service installation.
+`start.bat` detects whether it is elevated and, when needed, relaunches itself through the normal Windows UAC prompt. It then runs `git pull --ff-only` and invokes the PowerShell installer. You therefore do not need to open an Administrator terminal manually; UAC approval is still required for service installation. Already-elevated shells continue directly without requesting elevation again.
 
 The PowerShell installer remains directly usable from an already elevated session:
 
