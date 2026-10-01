@@ -18,6 +18,8 @@ command -v "${PYTHON}" >/dev/null 2>&1 || {
   exit 1
 }
 
+bash "${SOURCE_DIR}/scripts/ensure-ffmpeg.sh"
+
 set_env_value() {
   local key="$1"
   local value="$2"
@@ -37,6 +39,7 @@ install -d -m 0755 "${PREFIX}"
 bash "${SOURCE_DIR}/scripts/bootstrap-venv.sh" "${PYTHON}" "${PREFIX}/.venv"
 "${PREFIX}/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
 "${PREFIX}/.venv/bin/python" -m pip install "${SOURCE_DIR}[whisper]"
+"${PREFIX}/.venv/bin/python" -m toolsapi_worker.audio_runtime
 
 # Keep the canonical runtime .env in the installed project directory.
 # Reinstall and deploy must preserve host-specific credentials and configuration.
