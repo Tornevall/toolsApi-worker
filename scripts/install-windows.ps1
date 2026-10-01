@@ -10,6 +10,8 @@ $EnvFile = Join-Path $Prefix ".env"
 $VenvDir = Join-Path $Prefix ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $ServiceName = "ToolsAPIWorker"
+$WorkerFfmpegRoot = Join-Path $Prefix "ffmpeg"
+$WorkerFfmpegBin = Join-Path $WorkerFfmpegRoot "bin"
 $GpuPolicyScript = Join-Path $SourceDir "scripts\windows-gpu-policy.ps1"
 
 if (-not (Test-Path $GpuPolicyScript)) {
@@ -163,8 +165,75 @@ function Test-Truthy {
     return $Value.Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")
 }
 
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    throw "ffmpeg is required for pyannote audio processing. Install ffmpeg and ensure it is available in the system PATH."
+function Install-WorkerFfmpegShared {
+    $ProcessArch = ("$env:PROCESSOR_ARCHITEW6432$env:PROCESSOR_ARCHITECTURE").ToUpperInvariant()
+    $ArchName = if ($ProcessArch.Contains("ARM64")) { "winarm64" } else { "win64" }
+    $ArchiveName = "ffmpeg-master-latest-$ArchName-lgpl-shared.zip"
+    $ReleaseBaseUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest"
+    $DownloadUrl = "$ReleaseBaseUrl/$ArchiveName"
+    $ChecksumUrl = "$ReleaseBaseUrl/checksums.sha256"
+    $TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("toolsapi-ffmpeg-" + [guid]::NewGuid().ToString("N"))
+    $ArchivePath = Join-Path $TempRoot $ArchiveName
+    $ChecksumPath = Join-Path $TempRoot "checksums.sha256"
+    $ExtractRoot = Join-Path $TempRoot "extract"
+
+    try {
+        New-Item -ItemType Directory -Path $TempRoot -Force | Out-Null
+        Write-Host "Installing worker-local shared FFmpeg runtime for TorchCodec..."
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $ArchivePath -UseBasicParsing
+        Invoke-WebRequest -Uri $ChecksumUrl -OutFile $ChecksumPath -UseBasicParsing
+
+        $ChecksumLine = Get-Content $ChecksumPath |
+            Where-Object { $_ -match ("(?i)^[0-9a-f]{64}\s+\*?" + [regex]::Escape($ArchiveName) + "$") } |
+            Select-Object -First 1
+        if (-not $ChecksumLine) {
+            throw "Could not find a SHA-256 checksum for $ArchiveName in the upstream release manifest."
+        }
+        $ExpectedHash = (($ChecksumLine -split "\s+")[0]).ToUpperInvariant()
+        $ActualHash = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToUpperInvariant()
+        if ($ActualHash -ne $ExpectedHash) {
+            throw "Downloaded shared FFmpeg archive failed SHA-256 verification."
+        }
+
+        Expand-Archive -Path $ArchivePath -DestinationPath $ExtractRoot -Force
+
+        $FfmpegExe = Get-ChildItem -Path $ExtractRoot -Filter "ffmpeg.exe" -File -Recurse |
+            Where-Object { $_.DirectoryName -match "[\\/]bin$" } |
+            Select-Object -First 1
+        if (-not $FfmpegExe) {
+            throw "Downloaded shared FFmpeg archive did not contain a bin\ffmpeg.exe runtime."
+        }
+
+        if (Test-Path $WorkerFfmpegRoot) {
+            Remove-Item -Path $WorkerFfmpegRoot -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $WorkerFfmpegBin -Force | Out-Null
+        Copy-Item -Path (Join-Path $FfmpegExe.DirectoryName "*") -Destination $WorkerFfmpegBin -Recurse -Force
+
+        if (-not (Test-Path (Join-Path $WorkerFfmpegBin "ffmpeg.exe"))) {
+            throw "Worker-local shared FFmpeg installation did not produce ffmpeg.exe."
+        }
+        if (-not (Get-ChildItem -Path $WorkerFfmpegBin -Filter "avcodec-*.dll" -File -ErrorAction SilentlyContinue)) {
+            throw "Worker-local FFmpeg installation is not a shared build; avcodec DLLs are missing."
+        }
+    } finally {
+        Remove-Item -Path $TempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-TorchCodecAudioRuntime {
+    if (Test-Path $WorkerFfmpegBin) {
+        $env:TOOLS_WORKER_FFMPEG_BIN_DIR = $WorkerFfmpegBin
+        if (-not $env:PATH.StartsWith($WorkerFfmpegBin, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $env:PATH = "$WorkerFfmpegBin;$env:PATH"
+        }
+    }
+
+    $Output = @(& $VenvPython -m toolsapi_worker.audio_runtime 2>&1)
+    return @{
+        Success = ($LASTEXITCODE -eq 0)
+        Output = ($Output -join " ")
+    }
 }
 
 $PythonCommand = Resolve-PythonCommand -Requested $Python
@@ -173,6 +242,12 @@ $GpuComputeCapability = if ($NativeNvidia) { Get-NvidiaComputeCapability } else 
 $EffectiveTorchIndexUrl = Resolve-PyTorchIndexUrl -RequestedIndexUrl $TorchIndexUrl -ComputeCapability $GpuComputeCapability
 $FreshConfig = -not (Test-Path $EnvFile)
 $ExistingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+
+if ($ExistingService -and $ExistingService.Status -ne "Stopped") {
+    Write-Host "Stopping $ServiceName before updating the worker runtime..."
+    Stop-Service -Name $ServiceName -Force
+    $ExistingService.WaitForStatus("Stopped", (New-TimeSpan -Seconds 30))
+}
 
 New-Item -ItemType Directory -Path $Prefix -Force | Out-Null
 
@@ -200,6 +275,23 @@ $InstallTarget = "$SourceDir[whisper,windows]"
 Invoke-PipInstall `
     -Arguments @($InstallTarget) `
     -FailureMessage "Could not install toolsapi-worker Whisper, diarization and Windows service dependencies after PyTorch was installed. Review the pip resolver output above for the failing package."
+
+$TorchCodecProbe = Test-TorchCodecAudioRuntime
+if (-not $TorchCodecProbe.Success) {
+    Install-WorkerFfmpegShared
+    $TorchCodecProbe = Test-TorchCodecAudioRuntime
+}
+if (-not $TorchCodecProbe.Success) {
+    $TorchVersion = @(& $VenvPython -c "import torch; print(torch.__version__)" 2>$null | Select-Object -Last 1)
+    $TorchCodecVersion = @(& $VenvPython -c "import importlib.metadata as m; print(m.version('torchcodec'))" 2>$null | Select-Object -Last 1)
+    throw "TorchCodec audio runtime validation failed even after installing worker-local shared FFmpeg. Verify TorchCodec/PyTorch compatibility. torch=$TorchVersion torchcodec=$TorchCodecVersion. Provider detail: $($TorchCodecProbe.Output)"
+}
+$FfmpegPath = if (Test-Path (Join-Path $WorkerFfmpegBin "ffmpeg.exe")) {
+    Join-Path $WorkerFfmpegBin "ffmpeg.exe"
+} else {
+    $ResolvedFfmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    if ($ResolvedFfmpeg) { $ResolvedFfmpeg.Source } else { "TorchCodec-resolved shared libraries" }
+}
 
 if ($FreshConfig) {
     Copy-Item (Join-Path $SourceDir ".env.example") $EnvFile
@@ -283,10 +375,6 @@ if ($DiarizationEnabled -and $DiarizationDevice -eq "cuda") {
 }
 
 if ($ExistingService) {
-    if ($ExistingService.Status -ne "Stopped") {
-        Stop-Service -Name $ServiceName -Force
-        $ExistingService.WaitForStatus("Stopped", (New-TimeSpan -Seconds 30))
-    }
     & $VenvPython -m toolsapi_worker.windows_service --startup auto update
 } else {
     & $VenvPython -m toolsapi_worker.windows_service --startup auto install
@@ -324,4 +412,5 @@ if ($WhisperDevice -eq "cuda") {
 if ($DiarizationEnabled -and $DiarizationDevice -eq "cuda") {
     Write-Host "Diarization GPU: native Windows PyTorch CUDA kernel validated."
 }
+Write-Host "TorchCodec audio: shared-library decode validated via $FfmpegPath."
 Write-Host "Set TOOLS_WORKER_DIARIZATION_HF_TOKEN in .env when Community-1 is not already available locally."

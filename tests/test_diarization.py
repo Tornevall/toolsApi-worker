@@ -340,6 +340,31 @@ class WorkerDiarizationTest(unittest.TestCase):
         self.assertNotIn(str(media), str(debug))
         self.assertNotIn("sensitive transcript text", str(debug))
 
+    def test_debug_provider_exception_retains_long_multiline_detail(self):
+        secret = "hf_secret_never_return"
+        heartbeat = _Heartbeat()
+        segments = [{"start": 0.0, "end": 1.0, "text": "sensitive transcript text"}]
+        provider_detail = ("Likely cause detail that must survive sanitization.\n" * 80)
+
+        with tempfile.TemporaryDirectory() as root:
+            media = Path(root) / "audio.wav"
+            media.write_bytes(b"fake")
+
+            def broken_pipeline(_source, token=None):
+                raise RuntimeError(
+                    f"{secret} failed at {media}\n{provider_detail}"
+                )
+
+            diarizer = PyannoteDiarizer(self.config(), pipeline_factory=broken_pipeline)
+            _, result = diarizer.diarize(self.claim(debug=True), media, segments, heartbeat)
+
+        message = result["debug"]["exception"]["message"]
+        self.assertGreater(len(message), 1000)
+        self.assertLessEqual(len(message), 8000)
+        self.assertIn("Likely cause detail", message)
+        self.assertNotIn(secret, message)
+        self.assertNotIn(str(media), message)
+
     def test_not_requested_is_skipped_without_loading_pipeline(self):
         called = False
 

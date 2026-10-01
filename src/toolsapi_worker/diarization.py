@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .api import WhisperClaim, WorkerLeaseLostError
+from .audio_runtime import validate_torchcodec_audio_runtime
 from .config import WorkerConfig
 
 
@@ -21,6 +22,7 @@ class PyannoteDiarizer:
         self.pipeline_factory = pipeline_factory
         self.torch_module = torch_module
         self._cuda_probe_result: bool | None = None
+        self._audio_runtime_validated = False
 
     @property
     def supported(self) -> bool:
@@ -121,7 +123,7 @@ class PyannoteDiarizer:
             raise
         except Exception as exc:  # noqa: BLE001
             error_code, error_message = self._normalize_error(exc)
-            status = "unavailable" if error_code in {"missing_dependency", "unsupported_provider"} else "failed"
+            status = "unavailable" if error_code in {"missing_dependency", "unsupported_provider", "media_runtime_unavailable"} else "failed"
             heartbeat.update(99, "Speaker diarization", error_message)
             result = {
                 "requested": True,
@@ -147,6 +149,23 @@ class PyannoteDiarizer:
                     exception=exc,
                 )
             return segments, result
+
+    def validate_audio_runtime(self) -> None:
+        """Prove that TorchCodec can decode audio before this worker claims Whisper work."""
+        if self._audio_runtime_validated:
+            return
+
+        try:
+            validate_torchcodec_audio_runtime()
+        except Exception as exc:  # noqa: BLE001
+            detail = str(exc).strip() or type(exc).__name__
+            raise RuntimeError(
+                "TorchCodec audio runtime validation failed. "
+                "FFmpeg shared libraries must be visible to TorchCodec and the installed "
+                f"TorchCodec/PyTorch versions must be compatible. Provider detail: {detail[:8000]}"
+            ) from exc
+
+        self._audio_runtime_validated = True
 
     def _create_pipeline(self) -> Any:
         if self.pipeline_factory is not None:
@@ -455,12 +474,14 @@ class PyannoteDiarizer:
         message = re.sub(r"(?i)\\b[A-Z]:\\\\[^\\r\\n\\t\\\"']+", "[PATH]", message)
         message = re.sub(r"(?<![:/\\w])/(?:[^ \\r\\n\\t\\\"']+)", "[PATH]", message)
 
-        return message[:1000]
+        return message[:8000]
 
     def _normalize_error(self, exc: Exception) -> tuple[str, str]:
         text = str(exc).strip()
         lowered = text.lower()
 
+        if "libtorchcodec" in lowered or "torchcodec audio runtime validation failed" in lowered or ("ffmpeg" in lowered and "full-shared" in lowered):
+            return "media_runtime_unavailable", "TorchCodec audio runtime could not load its FFmpeg/PyTorch dependencies on this worker."
         if "dependencies are missing" in lowered or "no module named" in lowered or "modulenotfounderror" in lowered:
             return "missing_dependency", "Speaker diarization dependencies are missing on this worker."
         if "no speaker turns" in lowered:

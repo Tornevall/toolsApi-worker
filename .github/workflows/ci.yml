@@ -28,18 +28,23 @@ jobs:
           test -s AGENTS.md
           test -s Makefile
           test -s .env.example
+          test -s start.bat
           test -s docs/architecture.md
           test -s docs/contracts.md
           test -s scripts/install.sh
+          test -s scripts/ensure-ffmpeg.sh
           test -s scripts/install-macos.sh
           test -s scripts/uninstall-macos.sh
           test -s scripts/install-windows.ps1
           test -s scripts/windows-gpu-policy.ps1
           test -s scripts/uninstall-windows.ps1
           test -s scripts/smoke-install.sh
+          test -s src/toolsapi_worker/audio_runtime.py
           test -s src/toolsapi_worker/windows_service.py
           test -s packaging/systemd/toolsapi-worker.service
           test -s packaging/launchd/net.tornevall.toolsapi-worker.plist
+      - name: Parse Unix installers
+        run: bash -n scripts/ensure-ffmpeg.sh scripts/install.sh scripts/install-macos.sh
       - name: Install package
         run: python -m pip install .
       - name: Run checks
@@ -163,6 +168,10 @@ jobs:
           if ($install -notmatch 'get_cuda_device_count') { throw 'CTranslate2 CUDA validation is missing from installer.' }
           if ($install -notmatch 'torch\.cuda\.is_available') { throw 'PyTorch CUDA validation is missing from installer.' }
           if ($install -notmatch 'torch\.ones') { throw 'PyTorch CUDA kernel validation is missing from installer.' }
+          if ($install -notmatch 'lgpl-shared\.zip') { throw 'Shared FFmpeg repair path is missing from Windows installer.' }
+          if ($install -notmatch 'checksums\.sha256') { throw 'Shared FFmpeg checksum manifest validation is missing.' }
+          if ($install -notmatch 'Get-FileHash') { throw 'Shared FFmpeg SHA-256 validation is missing.' }
+          if ($install -notmatch 'toolsapi_worker\.audio_runtime') { throw 'TorchCodec audio runtime probe is missing from Windows installer.' }
           if ($policy -notmatch 'int8_float32') { throw 'Pascal-compatible CTranslate2 compute-type policy is missing.' }
           if ($policy -notmatch 'download\.pytorch\.org/whl/cu126') { throw 'Legacy NVIDIA PyTorch CUDA 12.6 policy is missing.' }
 

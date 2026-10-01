@@ -32,10 +32,15 @@ class _Pipeline:
 
 
 class _FakeDiarizer:
-    def __init__(self, pipeline=None, supported=True, failure=None):
+    def __init__(self, pipeline=None, supported=True, failure=None, audio_runtime_failure=None):
         self.pipeline = pipeline or _Pipeline()
         self.supported = supported
         self.failure = failure
+        self.audio_runtime_failure = audio_runtime_failure
+
+    def validate_audio_runtime(self):
+        if self.audio_runtime_failure is not None:
+            raise self.audio_runtime_failure
 
     def _support_failure(self):
         return "device_unavailable", "The configured speaker diarization device is unavailable on this worker."
@@ -72,10 +77,22 @@ class DiarizationDiagnosticTests(unittest.TestCase):
         self.assertEqual("ready", report["status"])
         self.assertTrue(report["pipeline_loaded"])
         self.assertFalse(report["audio_checked"])
+        self.assertTrue(report["audio_runtime_validated"])
         self.assertEqual("mps", report["resolved_device"])
         self.assertTrue(report["hf_token_present"])
         self.assertNotIn("hf-secret-never-print", str(report))
         self.assertNotIn("worker-secret-never-print", str(report))
+
+    def test_model_load_diagnostic_fails_when_torchcodec_audio_runtime_is_broken(self):
+        failure = RuntimeError("Could not load libtorchcodec because FFmpeg is not full-shared")
+        report = DiarizationDiagnostic(
+            self.config(),
+            diarizer=_FakeDiarizer(audio_runtime_failure=failure),
+        ).run()
+
+        self.assertEqual("failed", report["status"])
+        self.assertFalse(report["audio_runtime_validated"])
+        self.assertEqual("RuntimeError", report["exception_type"])
 
     def test_audio_diagnostic_runs_pipeline_and_reports_speakers(self):
         with tempfile.TemporaryDirectory() as root:

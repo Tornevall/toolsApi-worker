@@ -55,7 +55,7 @@ Linux and native Windows CPU/CUDA workers use `faster-whisper` through the `whis
 
 Apple Silicon macOS workers use `mlx-whisper` through the `whisper-mlx` package extra. The macOS installer configures `TOOLS_WORKER_WHISPER_DEVICE=metal`, which selects the MLX runtime and allows Whisper inference to use Apple Silicon acceleration. MLX model names are mapped to the corresponding `mlx-community` Whisper repositories.
 
-Speaker diarization uses `pyannote.audio` with `pyannote/speaker-diarization-community-1` on Linux, Windows and macOS. A live `whisper.transcribe` worker must keep diarization enabled and must pass its runtime preflight before the first claim poll. `TOOLS_WORKER_DIARIZATION_DEVICE=auto` prefers CUDA, then Apple MPS when available, then CPU.
+Speaker diarization uses `pyannote.audio` with `pyannote/speaker-diarization-community-1` on Linux, Windows and macOS. Pyannote 4.x reaches audio through TorchCodec, so every supported installation now proves that TorchCodec can decode a generated WAV through the host FFmpeg shared libraries before the worker is allowed to claim Whisper work. A live `whisper.transcribe` worker repeats that audio-runtime preflight on process startup. `TOOLS_WORKER_DIARIZATION_DEVICE=auto` prefers CUDA, then Apple MPS when available, then CPU.
 
 Python 3.10 or newer is the runtime on all supported platforms. Windows runs as a native Windows service and does not require WSL or an interactive CMD session. PowerShell is used only for installation and service administration; the long-running process is the Python polling runtime.
 
@@ -74,7 +74,7 @@ make install
 make status
 ```
 
-On Apple Silicon macOS, `make install` installs the MLX Whisper extra. On other Unix-like platforms it installs the `faster-whisper` extra. Both extras also install pyannote speaker diarization dependencies. On Linux, `make install` also prints the runtime device/compute values that a fresh system install would select from the actual CTranslate2/PyTorch capabilities.
+On Apple Silicon macOS, `make install` installs the MLX Whisper extra. On other Unix-like platforms it installs the `faster-whisper` extra. Both extras also install pyannote speaker diarization dependencies. The install path provisions FFmpeg when it is missing (apt on supported Debian/Ubuntu hosts, Homebrew on macOS) and fails unless a real TorchCodec decode succeeds. On Linux, `make install` also prints the runtime device/compute values that a fresh system install would select from the actual CTranslate2/PyTorch capabilities.
 
 Run the local worker with:
 
@@ -90,7 +90,7 @@ Every worker can validate its own pyannote runtime without polling ToolsAPI or c
 toolsapi-worker diagnose diarization --env-file <path-to-worker-env>
 ```
 
-The command reports only safe runtime state, including whether diarization is enabled, whether a Hugging Face token is present, the configured/resolved device, runtime support and whether the configured pyannote pipeline can actually load. It exits with status `0` only when the model-load diagnostic succeeds. Worker credentials and Hugging Face token values are never printed.
+The command reports only safe runtime state, including whether diarization is enabled, whether a Hugging Face token is present, the configured/resolved device, TorchCodec audio-runtime validation, runtime support and whether the configured pyannote pipeline can actually load. It exits with status `0` only when the model-load diagnostic succeeds. Worker credentials and Hugging Face token values are never printed.
 
 To test actual inference as well, supply any local audio file:
 
@@ -106,13 +106,9 @@ Requirements:
 
 - Apple Silicon Mac (`arm64`)
 - Python 3.10 or newer
-- `ffmpeg`
+- Homebrew, used by the installer to provision `ffmpeg` when it is missing
 
-Install `ffmpeg` with Homebrew if needed:
-
-```bash
-brew install ffmpeg
-```
+The installer checks for FFmpeg and runs `brew install ffmpeg` automatically when needed. It then validates a real TorchCodec audio decode before launchd is installed or restarted.
 
 Install the worker as a per-user launchd service:
 
@@ -176,19 +172,27 @@ Requirements:
 
 - Native Windows 10/11 or Windows Server with PowerShell
 - Python 3.10 or newer installed for Windows; standard python.org and Microsoft Store Python installs are supported
-- `ffmpeg` in the Windows system `PATH` for pyannote audio handling
+- Git, when using the recommended `start.bat` update/install entry point
 - For NVIDIA GPU execution: a native Windows NVIDIA driver plus CUDA 12 cuBLAS and cuDNN 9 visible to the service process
 - A CUDA-enabled PyTorch build compatible with the actual NVIDIA architecture when pyannote should run on the GPU
 
 WSL is not used. The worker is installed directly on Windows so CUDA is exposed directly to faster-whisper/CTranslate2 and PyTorch/pyannote.
 
-From an elevated PowerShell in a repository checkout:
+The recommended entry point is simply:
+
+```text
+start.bat
+```
+
+`start.bat` detects whether it is elevated and, when needed, relaunches itself through the normal Windows UAC prompt. It then runs `git pull --ff-only` and invokes the PowerShell installer. You therefore do not need to open an Administrator terminal manually; UAC approval is still required for service installation.
+
+The PowerShell installer remains directly usable from an already elevated session:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
 ```
 
-The default prefix is `%ProgramData%\Tornevall\toolsapi-worker`. The installer creates an isolated `.venv`, installs `faster-whisper`, pyannote, PyTorch and the Windows service runtime, preserves an existing `.env`, and registers `ToolsAPIWorker` as an automatic Windows service. The service continuously runs the normal ToolsAPI poll loop; there is no Task Scheduler cadence and no interactive CMD process.
+The default prefix is `%ProgramData%\Tornevall\toolsapi-worker`. The installer creates an isolated `.venv`, installs `faster-whisper`, pyannote, PyTorch and the Windows service runtime, preserves an existing `.env`, and registers `ToolsAPIWorker` as an automatic Windows service. Before service registration it runs a real TorchCodec WAV decode. If the host FFmpeg is absent or is an executable-only/static build that TorchCodec cannot use, the installer downloads a worker-local BtbN LGPL shared FFmpeg build, verifies it against the upstream SHA-256 manifest, stores it under the worker prefix and retries the decode. The Python runtime adds that worker-local DLL directory before TorchCodec/pyannote loads, so the Windows service does not depend on an interactive user's PATH. The service continuously runs the normal ToolsAPI poll loop; there is no Task Scheduler cadence and no interactive CMD process.
 
 Windows service registration prepares an explicit `pythonservice.exe` inside the worker Python prefix and keeps the active `pythonXX.dll`, `pywintypesXX.dll` and required pywin32 service extension modules beside it. Registration also pins the service class and per-service Python import path so the Service Control Manager can import pywin32 and the worker package before startup. This avoids pywin32's default attempt to copy helper DLLs into the base Python installation. In particular, Microsoft Store Python keeps its base runtime under the protected `C:\Program Files\WindowsApps\...` package tree, and the worker never needs write access there. The Service Control Manager therefore points at the worker-controlled service host under `%ProgramData%` rather than relying on a writable global Python installation.
 
@@ -232,7 +236,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-windows.ps1 -Remove
 
 ## Ubuntu installation
 
-Ubuntu remains the primary Linux host platform. The system installer installs the worker plus the `whisper` runtime extra, including faster-whisper and pyannote diarization dependencies. A missing Debian/Ubuntu Python venv package is bootstrapped automatically when root/sudo is available.
+Ubuntu remains the primary Linux host platform. The system installer installs the worker plus the `whisper` runtime extra, including faster-whisper and pyannote diarization dependencies. A missing Debian/Ubuntu Python venv package is bootstrapped automatically when root/sudo is available. FFmpeg is installed through apt when missing, and the installer must complete a real TorchCodec WAV decode before systemd is enabled/started.
 
 ```bash
 git clone https://github.com/Tornevall/toolsApi-worker.git
