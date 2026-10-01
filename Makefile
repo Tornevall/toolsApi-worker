@@ -32,9 +32,11 @@ help:
 		'make uninstall       Remove the platform service installation'
 
 install:
+	bash ./scripts/ensure-ffmpeg.sh
 	bash ./scripts/bootstrap-venv.sh "$(PYTHON)" "$(VENV)"
 	"$(VENV_PYTHON)" -m pip install --upgrade pip setuptools wheel
 	"$(VENV_PYTHON)" -m pip install ".[${LOCAL_WHISPER_EXTRA}]"
+	"$(VENV_PYTHON)" -m toolsapi_worker.audio_runtime
 	@printf '%s\n' "Installed toolsapi-worker in $(VENV)."
 	@if [ "$(UNAME_S)" = "Linux" ]; then \
 		printf '%s\n' 'Detected fresh-host runtime defaults:'; \
