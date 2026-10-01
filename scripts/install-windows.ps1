@@ -243,6 +243,12 @@ $EffectiveTorchIndexUrl = Resolve-PyTorchIndexUrl -RequestedIndexUrl $TorchIndex
 $FreshConfig = -not (Test-Path $EnvFile)
 $ExistingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 
+if ($ExistingService -and $ExistingService.Status -ne "Stopped") {
+    Write-Host "Stopping $ServiceName before updating the worker runtime..."
+    Stop-Service -Name $ServiceName -Force
+    $ExistingService.WaitForStatus("Stopped", (New-TimeSpan -Seconds 30))
+}
+
 New-Item -ItemType Directory -Path $Prefix -Force | Out-Null
 
 Invoke-ResolvedPython -Command $PythonCommand -Arguments @("-m", "venv", $VenvDir)
@@ -369,10 +375,6 @@ if ($DiarizationEnabled -and $DiarizationDevice -eq "cuda") {
 }
 
 if ($ExistingService) {
-    if ($ExistingService.Status -ne "Stopped") {
-        Stop-Service -Name $ServiceName -Force
-        $ExistingService.WaitForStatus("Stopped", (New-TimeSpan -Seconds 30))
-    }
     & $VenvPython -m toolsapi_worker.windows_service --startup auto update
 } else {
     & $VenvPython -m toolsapi_worker.windows_service --startup auto install
