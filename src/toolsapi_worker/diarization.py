@@ -123,7 +123,7 @@ class PyannoteDiarizer:
             raise
         except Exception as exc:  # noqa: BLE001
             error_code, error_message = self._normalize_error(exc)
-            status = "unavailable" if error_code in {"missing_dependency", "unsupported_provider"} else "failed"
+            status = "unavailable" if error_code in {"missing_dependency", "unsupported_provider", "media_runtime_unavailable"} else "failed"
             heartbeat.update(99, "Speaker diarization", error_message)
             result = {
                 "requested": True,
