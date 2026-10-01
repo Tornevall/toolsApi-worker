@@ -163,9 +163,11 @@ function Test-Truthy {
     return $Value.Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")
 }
 
-if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-    throw "ffmpeg is required for pyannote audio processing. Install ffmpeg and ensure it is available in the system PATH."
+$FfmpegCommand = Get-Command ffmpeg -ErrorAction SilentlyContinue
+if (-not $FfmpegCommand) {
+    throw "ffmpeg is required for pyannote/TorchCodec audio processing. Install a Windows full-shared/shared FFmpeg build and ensure its bin directory is available in PATH."
 }
+$FfmpegPath = $FfmpegCommand.Source
 
 $PythonCommand = Resolve-PythonCommand -Requested $Python
 $NativeNvidia = $null -ne (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue)
@@ -200,6 +202,32 @@ $InstallTarget = "$SourceDir[whisper,windows]"
 Invoke-PipInstall `
     -Arguments @($InstallTarget) `
     -FailureMessage "Could not install toolsapi-worker Whisper, diarization and Windows service dependencies after PyTorch was installed. Review the pip resolver output above for the failing package."
+
+$TorchCodecProbeCode = @'
+import tempfile
+import wave
+from pathlib import Path
+from torchcodec.decoders import AudioDecoder
+
+with tempfile.TemporaryDirectory(prefix="toolsapi-torchcodec-") as root:
+    media = Path(root) / "probe.wav"
+    with wave.open(str(media), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 1600)
+    samples = AudioDecoder(str(media)).get_all_samples()
+    data = getattr(samples, "data", None)
+    if data is None or not callable(getattr(data, "numel", None)) or int(data.numel()) < 1:
+        raise RuntimeError("TorchCodec AudioDecoder returned no samples.")
+print("TorchCodec audio runtime validated.")
+'@
+$TorchCodecProbeOutput = @(& $VenvPython -c $TorchCodecProbeCode 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    $TorchVersion = @(& $VenvPython -c "import torch; print(torch.__version__)" 2>$null | Select-Object -Last 1)
+    $TorchCodecVersion = @(& $VenvPython -c "import importlib.metadata as m; print(m.version('torchcodec'))" 2>$null | Select-Object -Last 1)
+    throw "TorchCodec audio runtime validation failed before service installation. Detected FFmpeg: $FfmpegPath. On Windows, TorchCodec requires a full-shared/shared FFmpeg build whose DLLs are visible to the worker process; an executable-only FFmpeg build is insufficient. Also verify TorchCodec/PyTorch compatibility. torch=$TorchVersion torchcodec=$TorchCodecVersion. Provider detail: $($TorchCodecProbeOutput -join ' ')"
+}
 
 if ($FreshConfig) {
     Copy-Item (Join-Path $SourceDir ".env.example") $EnvFile
@@ -324,4 +352,5 @@ if ($WhisperDevice -eq "cuda") {
 if ($DiarizationEnabled -and $DiarizationDevice -eq "cuda") {
     Write-Host "Diarization GPU: native Windows PyTorch CUDA kernel validated."
 }
+Write-Host "TorchCodec audio: FFmpeg shared-library decode validated via $FfmpegPath."
 Write-Host "Set TOOLS_WORKER_DIARIZATION_HF_TOKEN in .env when Community-1 is not already available locally."
