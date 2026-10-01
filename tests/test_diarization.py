@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,8 +26,13 @@ class _Pipeline:
         self.device = None
         self.sources = []
 
-    def __call__(self, source, **_kwargs):
+    def __call__(self, source, **kwargs):
         self.sources.append(source)
+        hook = kwargs.get("hook")
+        if callable(hook):
+            hook("segmentation", None, completed=2, total=8)
+            hook("segmentation", None, completed=8, total=8)
+            hook("clustering", None)
         return _Annotation()
 
     def to(self, device):
@@ -157,6 +163,39 @@ class WorkerDiarizationTest(unittest.TestCase):
         self.assertEqual(1, len(pipeline.sources))
         self.assertTrue(hasattr(pipeline.sources[0], "read"))
         self.assertFalse(isinstance(pipeline.sources[0], (str, Path)))
+        structured = []
+        for _, label, detail in heartbeat.updates:
+            if label != "Speaker diarization" or not str(detail).startswith("{"):
+                continue
+            try:
+                structured.append(json.loads(detail))
+            except json.JSONDecodeError:
+                pass
+        self.assertTrue(any(item.get("type") == "diarization_progress" for item in structured))
+        segmentation = [item for item in structured if item.get("stage") == "segmentation"]
+        self.assertTrue(segmentation)
+        self.assertEqual(8, segmentation[-1]["completed"])
+        self.assertEqual(8, segmentation[-1]["total"])
+        self.assertEqual(100.0, segmentation[-1]["percent"])
+
+    def test_provider_progress_hook_ignores_invalid_counts_and_keeps_payload_bounded(self):
+        diarizer = PyannoteDiarizer(
+            self.config(),
+            pipeline_factory=lambda _source, token=None: _Pipeline(),
+        )
+        heartbeat = _Heartbeat()
+        hook = diarizer._provider_progress_hook(heartbeat)
+
+        hook("speaker embedding " + ("x" * 200), None, completed="bad", total=0)
+
+        _, label, detail = heartbeat.updates[-1]
+        payload = json.loads(detail)
+        self.assertEqual("Speaker diarization", label)
+        self.assertEqual("diarization_progress", payload["type"])
+        self.assertLessEqual(len(payload["stage"]), 80)
+        self.assertNotIn("completed", payload)
+        self.assertNotIn("percent", payload)
+        self.assertLessEqual(len(detail), 500)
 
     def test_debug_mode_explains_overlap_mapping_without_transcript_text_or_secrets(self):
         diarizer = PyannoteDiarizer(
