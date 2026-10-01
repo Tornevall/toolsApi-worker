@@ -27,7 +27,7 @@ class InstallationAudioRuntimeContractTest(unittest.TestCase):
 
     def test_windows_installer_repairs_with_checksum_verified_shared_ffmpeg(self):
         installer = self.read("scripts/install-windows.ps1")
-        self.assertIn('ffmpeg-master-latest-$ArchName-gpl-shared.zip', installer)
+        self.assertIn('ffmpeg-master-latest-$ArchName-lgpl-shared.zip', installer)
         self.assertIn('BtbN/FFmpeg-Builds/releases/download/latest', installer)
         self.assertIn('checksums.sha256', installer)
         self.assertIn('Get-FileHash -Path $ArchivePath -Algorithm SHA256', installer)
