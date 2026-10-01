@@ -95,15 +95,22 @@ class DiarizationDiagnosticTests(unittest.TestCase):
         self.assertEqual("RuntimeError", report["exception_type"])
 
     def test_audio_diagnostic_runs_pipeline_and_reports_speakers(self):
+        pipeline = _Pipeline()
         with tempfile.TemporaryDirectory() as root:
             media = Path(root) / "audio.wav"
             media.write_bytes(b"fake-audio")
-            report = DiarizationDiagnostic(self.config(), diarizer=_FakeDiarizer()).run(str(media))
+            report = DiarizationDiagnostic(
+                self.config(),
+                diarizer=_FakeDiarizer(pipeline=pipeline),
+            ).run(str(media))
 
         self.assertEqual("completed", report["status"])
         self.assertTrue(report["audio_checked"])
         self.assertEqual(2, report["speaker_turns"])
         self.assertEqual(2, report["speaker_count"])
+        self.assertEqual(1, len(pipeline.calls))
+        self.assertTrue(hasattr(pipeline.calls[0][0], "read"))
+        self.assertFalse(isinstance(pipeline.calls[0][0], (str, Path)))
 
     def test_audio_diagnostic_uses_configured_speaker_constraints(self):
         pipeline = _Pipeline()
