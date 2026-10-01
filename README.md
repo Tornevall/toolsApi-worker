@@ -39,7 +39,7 @@ On Apple Silicon, the combined `mlx-whisper` call may still be loading or downlo
 
 A diarization failure does not discard a successful transcript. The worker submits the transcript together with a separate `failed` or `unavailable` diarization status so ToolsAPI can preserve the text and show the speaker-processing failure independently.
 
-ToolsAPI can mark a Whisper job with `diarization_debug=true` from its first attempt or a later diarization-only re-run. The live worker advertises `supports_diarization_debug=true` only when its diarizer is usable, then returns bounded safe diagnostics describing pyannote runtime state and the overlap candidates used to map speaker turns onto transcript segments. Transcript text, media paths and credentials are not included in the debug payload.
+ToolsAPI can mark a Whisper job with `diarization_debug=true` from its first attempt or a later diarization-only re-run. The live worker advertises `supports_diarization_debug=true` only when its diarizer is usable, then returns bounded safe diagnostics describing pyannote runtime state and the overlap candidates used to map speaker turns onto transcript segments. Transcript text, media paths and credentials are not included in the debug payload. When pyannote itself fails, debug mode also includes the exception class and a bounded redacted provider message; configured secrets and local filesystem paths are removed before the payload leaves the worker.
 
 The initial executable runtime is deliberately serial (`TOOLS_WORKER_CONCURRENCY=1`). Parallel execution will be added only with dedicated ownership/lifecycle coverage.
 
