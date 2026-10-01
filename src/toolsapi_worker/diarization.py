@@ -361,6 +361,7 @@ class PyannoteDiarizer:
                 )
 
             candidates.sort(key=lambda item: float(item["overlap"]), reverse=True)
+            candidate_count = len(candidates)
             candidates = candidates[:max_candidates]
             chosen = candidates[0] if candidates else None
             decisions.append(
@@ -372,7 +373,8 @@ class PyannoteDiarizer:
                     "chosen_speaker": chosen["speaker"] if chosen else None,
                     "best_overlap": chosen["overlap"] if chosen else 0.0,
                     "best_segment_ratio": chosen["segment_ratio"] if chosen else 0.0,
-                    "candidate_count": len(candidates),
+                    "candidate_count": candidate_count,
+                    "candidates_truncated": candidate_count > max_candidates,
                     "candidates": candidates,
                 }
             )
