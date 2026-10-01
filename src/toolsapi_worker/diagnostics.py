@@ -28,6 +28,7 @@ class DiarizationDiagnostic:
             "supported": bool(self.diarizer.supported),
             "pipeline_loaded": False,
             "audio_checked": False,
+            "audio_runtime_validated": False,
         }
 
         if not report["supported"]:
@@ -43,6 +44,10 @@ class DiarizationDiagnostic:
 
         try:
             report["resolved_device"] = self.diarizer._resolved_device()
+            validate_audio_runtime = getattr(self.diarizer, "validate_audio_runtime", None)
+            if callable(validate_audio_runtime):
+                validate_audio_runtime()
+            report["audio_runtime_validated"] = True
             pipeline = self.diarizer._create_pipeline()
             report["pipeline_loaded"] = True
 
@@ -112,4 +117,4 @@ class DiarizationDiagnostic:
         for secret in (self.config.diarization_hf_token, self.config.worker_token):
             if secret:
                 message = message.replace(secret, "[REDACTED]")
-        return message[:1000]
+        return message[:8000]
