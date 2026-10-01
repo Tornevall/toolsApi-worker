@@ -3,17 +3,19 @@ setlocal
 
 cd /d "%~dp0"
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent()); if ($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 0 } else { exit 1 }"
-if errorlevel 1 (
-    echo Requesting administrator privileges...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -WorkingDirectory '%~dp0' -Verb RunAs"
-    if errorlevel 1 (
-        echo Administrator elevation was cancelled or failed.
-        exit /b 1
-    )
-    exit /b 0
-)
+fltmc >nul 2>&1
+if "%errorlevel%"=="0" goto elevated
 
+echo Requesting administrator privileges...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -WorkingDirectory '%~dp0' -Verb RunAs"
+if not "%errorlevel%"=="0" goto elevation_failed
+exit /b 0
+
+:elevation_failed
+echo Administrator elevation was cancelled or failed.
+exit /b 1
+
+:elevated
 echo Stopping ToolsAPI Worker...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$service = Get-Service -Name 'ToolsAPIWorker' -ErrorAction SilentlyContinue; if ($service -and $service.Status -ne 'Stopped') { Stop-Service -Name 'ToolsAPIWorker' -Force; $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30)) }"
