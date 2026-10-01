@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -137,7 +138,13 @@ class PyannoteDiarizer:
             }
             if claim.diarization_debug:
                 result["debug"] = self._build_debug_payload(
-                    claim, input_path, segments, [], "failed", error_code=error_code
+                    claim,
+                    input_path,
+                    segments,
+                    [],
+                    "failed",
+                    error_code=error_code,
+                    exception=exc,
                 )
             return segments, result
 
@@ -333,6 +340,7 @@ class PyannoteDiarizer:
         turns: list[dict[str, Any]],
         stage: str,
         error_code: str | None = None,
+        exception: Exception | None = None,
     ) -> dict[str, Any]:
         max_decisions = 5000
         max_candidates = 24
@@ -392,6 +400,9 @@ class PyannoteDiarizer:
             "generation": claim.generation,
             "stage": stage[:80],
             "error_code": (error_code or "")[:120] or None,
+            "exception": self._debug_exception_metadata(exception, input_path)
+            if exception is not None
+            else None,
             "runtime": {
                 "provider": self.config.diarization_provider,
                 "model": self.config.diarization_model,
@@ -412,6 +423,39 @@ class PyannoteDiarizer:
                 "decisions": decisions,
             },
         }
+
+    def _debug_exception_metadata(self, exc: Exception, input_path: Path) -> dict[str, str]:
+        return {
+            "type": type(exc).__name__[:120],
+            "message": self._safe_debug_exception_message(exc, input_path),
+        }
+
+    def _safe_debug_exception_message(self, exc: Exception, input_path: Path) -> str:
+        message = str(exc).strip() or type(exc).__name__
+
+        for secret in (self.config.diarization_hf_token, self.config.worker_token):
+            if secret:
+                message = message.replace(secret, "[REDACTED]")
+
+        sensitive_paths = [str(input_path)]
+        try:
+            sensitive_paths.append(str(input_path.resolve()))
+        except OSError:
+            pass
+        if self.config.diarization_model_dir.strip():
+            sensitive_paths.append(str(Path(self.config.diarization_model_dir).expanduser()))
+
+        for value in sensitive_paths:
+            if value:
+                message = message.replace(value, "[PATH]")
+
+        # Provider/runtime errors can contain installation or temporary paths that are
+        # unrelated to the input path. Keep debug useful while preventing local path
+        # disclosure from remote-worker diagnostics.
+        message = re.sub(r"(?i)\\b[A-Z]:\\\\[^\\r\\n\\t\\\"']+", "[PATH]", message)
+        message = re.sub(r"(?<![:/\\w])/(?:[^ \\r\\n\\t\\\"']+)", "[PATH]", message)
+
+        return message[:1000]
 
     def _normalize_error(self, exc: Exception) -> tuple[str, str]:
         text = str(exc).strip()

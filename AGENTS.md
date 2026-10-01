@@ -36,6 +36,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 - `operation=diarize` is diarization-only work against retained media for an already completed transcript. It must never run Whisper, submit transcript text/segments through transcript completion, or turn the existing transcript into a failed transcript job.
 - Worker completion may report a diarization failure independently while preserving a successful transcript. Do not convert a completed Whisper transcript into a transcription failure merely because diarization failed.
 - Never expose a Hugging Face token value in progress, terminal payloads, logs or error messages. A boolean token-presence diagnostic is allowed.
+- `diarization_debug` may include a bounded provider exception class/message only after configured credentials and local filesystem paths are redacted. Normal non-debug terminal errors remain generic.
 - Keep ToolsAPI business logic in ToolsAPI. Keep worker-side execution logic in this repository or in explicit reusable packages.
 - Do not require a checkout of the ToolsAPI repository on worker hosts.
 - Contract changes must be documented and tested in both repositories where compatibility can be affected.

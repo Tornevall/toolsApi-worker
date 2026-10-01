@@ -75,6 +75,8 @@ If `operation` is omitted, workers treat the claim as `transcribe` for compatibi
 
 When enabled, the worker may add a bounded `diarization.debug` object to the terminal result. It contains safe runtime/model/device information and the timing/overlap candidates used by the existing maximum-time-overlap speaker mapper. It must not contain transcript text, media/source paths, worker credentials or Hugging Face token values. The ordinary diarization result remains authoritative; debug data is diagnostic evidence only.
 
+When pyannote fails before speaker turns are available, debug mode may additionally include `exception.type` and a bounded `exception.message`. The message is redacted before leaving the worker: configured worker/Hugging Face credentials and local filesystem paths are removed. Non-debug terminal errors remain generic.
+
 The wire parser still recognizes the historical `url` descriptor for compatibility, but the production runtime does not execute it. Current ToolsAPI remote scheduling must stage URL-origin media first and issue `tools_media`.
 
 ## Lease-bound media
