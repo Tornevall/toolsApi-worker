@@ -24,10 +24,7 @@ command -v "${PYTHON}" >/dev/null 2>&1 || {
   exit 1
 }
 
-command -v ffmpeg >/dev/null 2>&1 || {
-  echo "ffmpeg is required for Whisper. Install it with: brew install ffmpeg" >&2
-  exit 1
-}
+bash "${SOURCE_DIR}/scripts/ensure-ffmpeg.sh"
 
 FFMPEG_BIN="$(command -v ffmpeg)"
 FFMPEG_DIR="$(dirname "${FFMPEG_BIN}")"
@@ -37,6 +34,7 @@ mkdir -p "${PREFIX}" "${PLIST_DIR}" "${HOME}/Library/Logs"
 "${PYTHON}" -m venv "${PREFIX}/.venv"
 "${PREFIX}/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
 "${PREFIX}/.venv/bin/python" -m pip install "${SOURCE_DIR}[whisper-mlx]"
+"${PREFIX}/.venv/bin/python" -m toolsapi_worker.audio_runtime
 
 if [[ ! -f "${ENV_FILE}" ]]; then
   cp "${SOURCE_DIR}/.env.example" "${ENV_FILE}"
