@@ -22,6 +22,7 @@ All notable changes to toolsApi-worker are documented here.
 
 ### Added
 
+- Added explicit `supports_diarization_debug` capability advertisement and `diarization_debug` claim handling. Debug-marked jobs capture safe pyannote/runtime metadata plus per-segment maximum-overlap speaker-mapping candidates from the first attempt as well as diarization-only reruns. Transcript text, media paths, worker credentials and Hugging Face token values are excluded from the debug payload.
 - Portable `toolsapi-worker diagnose diarization` host diagnostics for Linux, Windows and macOS. The command safely reports configured/resolved diarization runtime state, verifies that the configured pyannote pipeline can actually load, optionally runs a local audio file through the pipeline, returns non-zero on failure, and redacts worker/Hugging Face token values from local exception details. Fixes #40.
 - Initial standalone worker repository architecture.
 - Pull-based polling and atomic claim/lease design.
