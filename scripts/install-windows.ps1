@@ -166,17 +166,35 @@ function Test-Truthy {
 }
 
 function Install-WorkerFfmpegShared {
-    $ArchName = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "winarm64" } else { "win64" }
+    $ProcessArch = ("$env:PROCESSOR_ARCHITEW6432$env:PROCESSOR_ARCHITECTURE").ToUpperInvariant()
+    $ArchName = if ($ProcessArch.Contains("ARM64")) { "winarm64" } else { "win64" }
     $ArchiveName = "ffmpeg-master-latest-$ArchName-gpl-shared.zip"
-    $DownloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$ArchiveName"
+    $ReleaseBaseUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest"
+    $DownloadUrl = "$ReleaseBaseUrl/$ArchiveName"
+    $ChecksumUrl = "$ReleaseBaseUrl/checksums.sha256"
     $TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("toolsapi-ffmpeg-" + [guid]::NewGuid().ToString("N"))
     $ArchivePath = Join-Path $TempRoot $ArchiveName
+    $ChecksumPath = Join-Path $TempRoot "checksums.sha256"
     $ExtractRoot = Join-Path $TempRoot "extract"
 
     try {
         New-Item -ItemType Directory -Path $TempRoot -Force | Out-Null
         Write-Host "Installing worker-local shared FFmpeg runtime for TorchCodec..."
         Invoke-WebRequest -Uri $DownloadUrl -OutFile $ArchivePath -UseBasicParsing
+        Invoke-WebRequest -Uri $ChecksumUrl -OutFile $ChecksumPath -UseBasicParsing
+
+        $ChecksumLine = Get-Content $ChecksumPath |
+            Where-Object { $_ -match ("(?i)^[0-9a-f]{64}\s+\*?" + [regex]::Escape($ArchiveName) + "$") } |
+            Select-Object -First 1
+        if (-not $ChecksumLine) {
+            throw "Could not find a SHA-256 checksum for $ArchiveName in the upstream release manifest."
+        }
+        $ExpectedHash = (($ChecksumLine -split "\s+")[0]).ToUpperInvariant()
+        $ActualHash = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToUpperInvariant()
+        if ($ActualHash -ne $ExpectedHash) {
+            throw "Downloaded shared FFmpeg archive failed SHA-256 verification."
+        }
+
         Expand-Archive -Path $ArchivePath -DestinationPath $ExtractRoot -Force
 
         $FfmpegExe = Get-ChildItem -Path $ExtractRoot -Filter "ffmpeg.exe" -File -Recurse |
