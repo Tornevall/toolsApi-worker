@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import inspect
 import re
 from pathlib import Path
@@ -77,8 +78,9 @@ class PyannoteDiarizer:
             if self.config.diarization_max_speakers is not None:
                 kwargs["max_speakers"] = self.config.diarization_max_speakers
 
+            progress_hook = self._provider_progress_hook(heartbeat)
             with input_path.open("rb") as audio_stream:
-                output = pipeline(audio_stream, **kwargs)
+                output = pipeline(audio_stream, hook=progress_hook, **kwargs)
             heartbeat.assert_owned()
             annotation = getattr(output, "speaker_diarization", output)
             if not hasattr(annotation, "itertracks"):
@@ -150,6 +152,51 @@ class PyannoteDiarizer:
                     exception=exc,
                 )
             return segments, result
+
+    def _provider_progress_hook(self, heartbeat: Any) -> Callable[..., None]:
+        def hook(step_name: Any, _artifact: Any = None, **kwargs: Any) -> None:
+            heartbeat.assert_owned()
+
+            stage = re.sub(r"[^A-Za-z0-9_. -]+", " ", str(step_name or "processing"))
+            stage = re.sub(r"\s+", " ", stage).strip()[:80] or "processing"
+
+            completed = self._safe_progress_int(kwargs.get("completed"))
+            total = self._safe_progress_int(kwargs.get("total"))
+            payload: dict[str, Any] = {
+                "type": "diarization_progress",
+                "stage": stage,
+            }
+
+            stage_percent: float | None = None
+            if completed is not None:
+                payload["completed"] = completed
+            if total is not None and total > 0:
+                payload["total"] = total
+                if completed is not None:
+                    stage_percent = max(0.0, min(100.0, (completed / total) * 100.0))
+                    payload["percent"] = round(stage_percent, 1)
+
+            coarse = 96
+            if stage_percent is not None:
+                coarse = max(96, min(98, int(round(96 + (stage_percent / 50.0)))))
+
+            heartbeat.update(
+                coarse,
+                "Speaker diarization",
+                json.dumps(payload, separators=(",", ":"), ensure_ascii=True)[:500],
+            )
+
+        return hook
+
+    @staticmethod
+    def _safe_progress_int(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return max(0, normalized)
 
     def validate_audio_runtime(self) -> None:
         """Prove that TorchCodec can decode audio before this worker claims Whisper work."""
