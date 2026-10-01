@@ -65,7 +65,8 @@ class DiarizationDiagnostic:
             if self.config.diarization_max_speakers is not None:
                 kwargs["max_speakers"] = self.config.diarization_max_speakers
 
-            output = pipeline(str(media), **kwargs)
+            with media.open("rb") as audio_stream:
+                output = pipeline(audio_stream, **kwargs)
             annotation = getattr(output, "speaker_diarization", output)
             if not hasattr(annotation, "itertracks"):
                 raise RuntimeError("Speaker diarization returned an unsupported result shape.")
@@ -100,7 +101,7 @@ class DiarizationDiagnostic:
             else:
                 error_code, error_message = self.diarizer._normalize_error(exc)
 
-            status = "unavailable" if error_code in {"missing_dependency", "unsupported_provider"} else "failed"
+            status = "unavailable" if error_code in {"missing_dependency", "unsupported_provider", "media_runtime_unavailable"} else "failed"
             report.update(
                 {
                     "status": status,
