@@ -168,7 +168,7 @@ function Test-Truthy {
 function Install-WorkerFfmpegShared {
     $ProcessArch = ("$env:PROCESSOR_ARCHITEW6432$env:PROCESSOR_ARCHITECTURE").ToUpperInvariant()
     $ArchName = if ($ProcessArch.Contains("ARM64")) { "winarm64" } else { "win64" }
-    $ArchiveName = "ffmpeg-master-latest-$ArchName-gpl-shared.zip"
+    $ArchiveName = "ffmpeg-master-latest-$ArchName-lgpl-shared.zip"
     $ReleaseBaseUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest"
     $DownloadUrl = "$ReleaseBaseUrl/$ArchiveName"
     $ChecksumUrl = "$ReleaseBaseUrl/checksums.sha256"
