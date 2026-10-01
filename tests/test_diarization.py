@@ -112,7 +112,7 @@ class WorkerDiarizationTest(unittest.TestCase):
         values.update(overrides)
         return WorkerConfig.from_mapping(values)
 
-    def claim(self, requested=True):
+    def claim(self, requested=True, debug=False):
         return WhisperClaim(
             job_id=1,
             lease_id="lease-1",
@@ -125,6 +125,7 @@ class WorkerDiarizationTest(unittest.TestCase):
             language="sv",
             diarization_requested=requested,
             input={"type": "tools_media", "download_url": "https://tools.example.test/media"},
+            diarization_debug=debug,
         )
 
     def test_maps_pyannote_turns_onto_whisper_segments(self):
@@ -150,6 +151,32 @@ class WorkerDiarizationTest(unittest.TestCase):
         self.assertEqual("SPEAKER_00", mapped[0]["speaker_label"])
         self.assertEqual("SPEAKER_01", mapped[1]["speaker_label"])
         self.assertTrue(any(label == "Speaker diarization" for _, label, _ in heartbeat.updates))
+
+    def test_debug_mode_explains_overlap_mapping_without_transcript_text_or_secrets(self):
+        diarizer = PyannoteDiarizer(
+            self.config(),
+            pipeline_factory=lambda _source, token=None: _Pipeline(),
+        )
+        heartbeat = _Heartbeat()
+        segments = [
+            {"start": 0.0, "end": 4.0, "text": "sensitive transcript text"},
+        ]
+
+        with tempfile.TemporaryDirectory() as root:
+            media = Path(root) / "audio.wav"
+            media.write_bytes(b"fake-audio")
+            _, result = diarizer.diarize(self.claim(debug=True), media, segments, heartbeat)
+
+        debug = result["debug"]
+        decision = debug["mapping"]["decisions"][0]
+        self.assertEqual("maximum_time_overlap", debug["mapping"]["algorithm"])
+        self.assertEqual("SPEAKER_01", decision["chosen_speaker"])
+        self.assertEqual(2, decision["candidate_count"])
+        self.assertGreater(decision["best_overlap"], 0)
+        serialized = str(debug)
+        self.assertNotIn("sensitive transcript text", serialized)
+        self.assertNotIn("hf_secret_never_return", serialized)
+        self.assertNotIn(str(media), serialized)
 
     def test_capability_is_not_advertised_when_runtime_dependencies_are_missing(self):
         diarizer = PyannoteDiarizer(self.config())

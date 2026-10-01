@@ -590,6 +590,7 @@ class WorkerRuntime:
                     compute_type=self.config.whisper_compute_type,
                     accepts_url_sources=self.config.accepts_url_sources,
                     supports_diarization=bool(getattr(self.diarizer, "supported", False)),
+                    supports_diarization_debug=bool(getattr(self.diarizer, "supported", False)),
                 )
             except WorkerAuthenticationError:
                 raise
@@ -749,6 +750,33 @@ class WorkerRuntime:
                             "speaker_count": 0,
                             "labelled_segment_count": 0,
                             "hf_token_present": bool(self.config.diarization_hf_token),
+                            "debug": {
+                                "schema_version": 1,
+                                "enabled": True,
+                                "executor": "remote_worker",
+                                "operation": claim.operation,
+                                "generation": claim.generation,
+                                "stage": "worker_exception",
+                                "error_code": "worker_error",
+                                "runtime": {
+                                    "provider": self.config.diarization_provider,
+                                    "model": self.config.diarization_model,
+                                    "device": self.config.diarization_device,
+                                    "min_speakers": self.config.diarization_min_speakers,
+                                    "max_speakers": self.config.diarization_max_speakers,
+                                    "hf_token_present": bool(self.config.diarization_hf_token),
+                                },
+                                "mapping": {
+                                    "algorithm": "maximum_time_overlap",
+                                    "segment_count": 0,
+                                    "turn_count": 0,
+                                    "decision_count": 0,
+                                    "decisions_truncated": False,
+                                    "max_decisions": 5000,
+                                    "max_candidates_per_segment": 24,
+                                    "decisions": [],
+                                },
+                            } if claim.diarization_debug else None,
                         },
                     ),
                     heartbeat,

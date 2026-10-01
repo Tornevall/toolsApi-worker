@@ -82,6 +82,7 @@ class ToolsApiClientTest(unittest.TestCase):
                     "model": "small",
                     "language": "sv",
                     "diarization_requested": True,
+                    "diarization_debug": True,
                     "input": {
                         "type": "tools_media",
                         "download_url": "https://tools.example.test/api/whisper/worker/jobs/123/media",
@@ -96,6 +97,7 @@ class ToolsApiClientTest(unittest.TestCase):
             compute_type="int8",
             accepts_url_sources=False,
             supports_diarization=True,
+            supports_diarization_debug=True,
         )
 
         self.assertIsInstance(claim, WhisperClaim)
@@ -103,6 +105,7 @@ class ToolsApiClientTest(unittest.TestCase):
         self.assertEqual(2, claim.generation)
         self.assertEqual("diarize", claim.operation)
         self.assertTrue(claim.diarization_requested)
+        self.assertTrue(claim.diarization_debug)
         request = urlopen.call_args.args[0]
         self.assertEqual("Bearer worker-secret", request.get_header("Authorization"))
         self.assertEqual("worker-mobile-slow", request.get_header("X-tools-worker-id"))
@@ -113,6 +116,42 @@ class ToolsApiClientTest(unittest.TestCase):
         self.assertEqual("int8", body["compute_type"])
         self.assertFalse(body["accepts_url_sources"])
         self.assertTrue(body["supports_diarization"])
+        self.assertTrue(body["supports_diarization_debug"])
+
+    @patch("urllib.request.urlopen")
+    def test_debug_claim_is_rejected_when_worker_did_not_advertise_debug_support(self, urlopen):
+        urlopen.return_value = FakeResponse(
+            {
+                "ok": True,
+                "claim_policy_version": 2,
+                "job": {
+                    "job_id": 123,
+                    "lease_id": "lease-abc",
+                    "generation": 2,
+                    "contract": "whisper.transcribe",
+                    "contract_version": 2,
+                    "lease_expires_at": "2026-09-01T13:45:00+00:00",
+                    "operation": "transcribe",
+                    "model": "small",
+                    "language": "sv",
+                    "diarization_requested": True,
+                    "diarization_debug": True,
+                    "input": {
+                        "type": "tools_media",
+                        "download_url": "https://tools.example.test/api/whisper/worker/jobs/123/media",
+                    },
+                },
+            }
+        )
+
+        with self.assertRaises(WorkerApiError) as caught:
+            self.client.claim_whisper(
+                models=("small",),
+                supports_diarization=True,
+                supports_diarization_debug=False,
+            )
+
+        self.assertIn("did not advertise debug support", str(caught.exception))
 
     @patch("urllib.request.urlopen")
     def test_claim_returns_none_when_queue_is_empty(self, urlopen):

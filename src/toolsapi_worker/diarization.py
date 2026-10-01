@@ -46,7 +46,7 @@ class PyannoteDiarizer:
 
         if not self.supported:
             error_code, error_message = self._support_failure()
-            return segments, {
+            result = {
                 "requested": True,
                 "status": "unavailable",
                 "provider": self.config.diarization_provider,
@@ -54,6 +54,11 @@ class PyannoteDiarizer:
                 "error_message": error_message,
                 "hf_token_present": bool(self.config.diarization_hf_token),
             }
+            if claim.diarization_debug:
+                result["debug"] = self._build_debug_payload(
+                    claim, input_path, segments, [], "preflight", error_code=error_code
+                )
+            return segments, result
 
         heartbeat.update(95, "Speaker diarization", "Loading pyannote speaker diarization model.")
         heartbeat.assert_owned()
@@ -94,7 +99,7 @@ class PyannoteDiarizer:
             labelled_count = sum(1 for segment in labelled_segments if segment.get("speaker_label"))
             heartbeat.update(99, "Speaker diarization", f"Detected {len(labels)} speaker(s).")
 
-            return labelled_segments, {
+            result = {
                 "requested": True,
                 "status": "completed",
                 "provider": "pyannote",
@@ -106,13 +111,18 @@ class PyannoteDiarizer:
                 "hf_token_present": bool(self.config.diarization_hf_token),
                 "device": self._resolved_device(),
             }
+            if claim.diarization_debug:
+                result["debug"] = self._build_debug_payload(
+                    claim, input_path, segments, turns, "completed"
+                )
+            return labelled_segments, result
         except WorkerLeaseLostError:
             raise
         except Exception as exc:  # noqa: BLE001
             error_code, error_message = self._normalize_error(exc)
             status = "unavailable" if error_code in {"missing_dependency", "unsupported_provider"} else "failed"
             heartbeat.update(99, "Speaker diarization", error_message)
-            return segments, {
+            result = {
                 "requested": True,
                 "status": status,
                 "provider": "pyannote",
@@ -125,6 +135,11 @@ class PyannoteDiarizer:
                 "labelled_segment_count": 0,
                 "hf_token_present": bool(self.config.diarization_hf_token),
             }
+            if claim.diarization_debug:
+                result["debug"] = self._build_debug_payload(
+                    claim, input_path, segments, [], "failed", error_code=error_code
+                )
+            return segments, result
 
     def _create_pipeline(self) -> Any:
         if self.pipeline_factory is not None:
@@ -309,6 +324,94 @@ class PyannoteDiarizer:
             normalized["speaker_label"] = best_label
             mapped.append(normalized)
         return mapped
+
+    def _build_debug_payload(
+        self,
+        claim: WhisperClaim,
+        input_path: Path,
+        segments: list[dict[str, Any]],
+        turns: list[dict[str, Any]],
+        stage: str,
+        error_code: str | None = None,
+    ) -> dict[str, Any]:
+        max_decisions = 5000
+        max_candidates = 24
+        decisions: list[dict[str, Any]] = []
+
+        for index, segment in enumerate(segments[:max_decisions]):
+            start = float(segment.get("start") or 0.0)
+            end = float(segment.get("end") or 0.0)
+            duration = max(0.0, end - start)
+            candidates: list[dict[str, Any]] = []
+
+            for turn in turns:
+                turn_start = float(turn.get("start") or 0.0)
+                turn_end = float(turn.get("end") or 0.0)
+                overlap = max(0.0, min(end, turn_end) - max(start, turn_start))
+                if overlap <= 0.0:
+                    continue
+                candidates.append(
+                    {
+                        "speaker": str(turn.get("speaker") or "")[:120],
+                        "turn_start": round(turn_start, 3),
+                        "turn_end": round(turn_end, 3),
+                        "overlap": round(overlap, 3),
+                        "segment_ratio": round(overlap / duration, 4) if duration > 0 else 0.0,
+                    }
+                )
+
+            candidates.sort(key=lambda item: float(item["overlap"]), reverse=True)
+            candidate_count = len(candidates)
+            candidates = candidates[:max_candidates]
+            chosen = candidates[0] if candidates else None
+            decisions.append(
+                {
+                    "segment_index": index,
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "duration": round(duration, 3),
+                    "chosen_speaker": chosen["speaker"] if chosen else None,
+                    "best_overlap": chosen["overlap"] if chosen else 0.0,
+                    "best_segment_ratio": chosen["segment_ratio"] if chosen else 0.0,
+                    "candidate_count": candidate_count,
+                    "candidates_truncated": candidate_count > max_candidates,
+                    "candidates": candidates,
+                }
+            )
+
+        try:
+            input_size_bytes = max(0, int(input_path.stat().st_size))
+        except OSError:
+            input_size_bytes = None
+
+        return {
+            "schema_version": 1,
+            "enabled": True,
+            "executor": "remote_worker",
+            "operation": claim.operation,
+            "generation": claim.generation,
+            "stage": stage[:80],
+            "error_code": (error_code or "")[:120] or None,
+            "runtime": {
+                "provider": self.config.diarization_provider,
+                "model": self.config.diarization_model,
+                "device": self._resolved_device() if self.supported else self.config.diarization_device,
+                "min_speakers": self.config.diarization_min_speakers,
+                "max_speakers": self.config.diarization_max_speakers,
+                "hf_token_present": bool(self.config.diarization_hf_token),
+                "input_size_bytes": input_size_bytes,
+            },
+            "mapping": {
+                "algorithm": "maximum_time_overlap",
+                "segment_count": len(segments),
+                "turn_count": len(turns),
+                "decision_count": len(decisions),
+                "decisions_truncated": len(segments) > max_decisions,
+                "max_decisions": max_decisions,
+                "max_candidates_per_segment": max_candidates,
+                "decisions": decisions,
+            },
+        }
 
     def _normalize_error(self, exc: Exception) -> tuple[str, str]:
         text = str(exc).strip()
