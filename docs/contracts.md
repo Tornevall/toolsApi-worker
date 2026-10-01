@@ -13,7 +13,8 @@ The live `whisper.transcribe` claim request advertises the worker runtime state:
   "device": "cuda",
   "compute_type": "int8_float32",
   "accepts_url_sources": false,
-  "supports_diarization": true
+  "supports_diarization": true,
+  "supports_diarization_debug": true
 }
 ```
 
@@ -55,6 +56,7 @@ A claim containing work includes the current lease/generation, an explicit opera
   "model": "medium",
   "language": "sv",
   "diarization_requested": true,
+  "diarization_debug": true,
   "input": {
     "type": "tools_media",
     "download_url": "https://tools.example.test/api/whisper/worker/jobs/123/media"
@@ -68,6 +70,10 @@ Supported operations are:
 - `diarize`: run only speaker diarization against retained media for an already completed transcript. Whisper must not run and the worker must not submit transcript text or transcript segments through the transcript-completion endpoint.
 
 If `operation` is omitted, workers treat the claim as `transcribe` for compatibility with earlier contract-version-2 responses. Unknown operations are rejected.
+
+`diarization_debug=true` is an optional per-job diagnostic request. A worker must advertise `supports_diarization_debug=true` before ToolsAPI may assign such a job. The production runtime also rejects a debug-marked claim if it was not advertised in that poll. This capability gate applies to both `operation=transcribe` and `operation=diarize`.
+
+When enabled, the worker may add a bounded `diarization.debug` object to the terminal result. It contains safe runtime/model/device information and the timing/overlap candidates used by the existing maximum-time-overlap speaker mapper. It must not contain transcript text, media/source paths, worker credentials or Hugging Face token values. The ordinary diarization result remains authoritative; debug data is diagnostic evidence only.
 
 The wire parser still recognizes the historical `url` descriptor for compatibility, but the production runtime does not execute it. Current ToolsAPI remote scheduling must stage URL-origin media first and issue `tools_media`.
 
