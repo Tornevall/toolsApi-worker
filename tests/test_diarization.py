@@ -313,6 +313,33 @@ class WorkerDiarizationTest(unittest.TestCase):
         self.assertNotIn(secret, str(result))
         self.assertNotIn(secret, str(heartbeat.updates))
 
+    def test_debug_failure_includes_redacted_provider_exception_without_paths_or_secrets(self):
+        secret = "hf_secret_never_return"
+        heartbeat = _Heartbeat()
+        segments = [{"start": 0.0, "end": 1.0, "text": "sensitive transcript text"}]
+
+        with tempfile.TemporaryDirectory() as root:
+            media = Path(root) / "audio.wav"
+            media.write_bytes(b"fake")
+
+            def broken_pipeline(_source, token=None):
+                raise RuntimeError(f"CUDA provider exploded at {media} using {secret}")
+
+            diarizer = PyannoteDiarizer(self.config(), pipeline_factory=broken_pipeline)
+            mapped, result = diarizer.diarize(self.claim(debug=True), media, segments, heartbeat)
+
+        self.assertEqual(segments, mapped)
+        self.assertEqual("process_failed", result["error_code"])
+        self.assertEqual("Speaker diarization failed on this worker.", result["error_message"])
+        debug = result["debug"]
+        self.assertEqual("RuntimeError", debug["exception"]["type"])
+        self.assertIn("CUDA provider exploded", debug["exception"]["message"])
+        self.assertIn("[PATH]", debug["exception"]["message"])
+        self.assertIn("[REDACTED]", debug["exception"]["message"])
+        self.assertNotIn(secret, str(debug))
+        self.assertNotIn(str(media), str(debug))
+        self.assertNotIn("sensitive transcript text", str(debug))
+
     def test_not_requested_is_skipped_without_loading_pipeline(self):
         called = False
 
