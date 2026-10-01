@@ -3,12 +3,11 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import re
-import tempfile
-import wave
 from pathlib import Path
 from typing import Any, Callable
 
 from .api import WhisperClaim, WorkerLeaseLostError
+from .audio_runtime import validate_torchcodec_audio_runtime
 from .config import WorkerConfig
 
 
@@ -157,35 +156,16 @@ class PyannoteDiarizer:
             return
 
         try:
-            decoder_class = self._torchcodec_audio_decoder()
-            with tempfile.TemporaryDirectory(prefix="toolsapi-torchcodec-") as root:
-                media = Path(root) / "probe.wav"
-                with wave.open(str(media), "wb") as handle:
-                    handle.setnchannels(1)
-                    handle.setsampwidth(2)
-                    handle.setframerate(16000)
-                    handle.writeframes(b"\x00\x00" * 1600)
-
-                decoder = decoder_class(str(media))
-                samples = decoder.get_all_samples()
-                data = getattr(samples, "data", None)
-                numel = getattr(data, "numel", None)
-                if data is None or not callable(numel) or int(numel()) < 1:
-                    raise RuntimeError("TorchCodec AudioDecoder returned no samples for the startup probe.")
+            validate_torchcodec_audio_runtime()
         except Exception as exc:  # noqa: BLE001
+            detail = str(exc).strip() or type(exc).__name__
             raise RuntimeError(
-                "TorchCodec audio runtime validation failed. On Windows, FFmpeg must be a shared/full-shared build "
-                "whose DLLs are visible to the worker process, and the installed TorchCodec version must be compatible "
-                "with the installed PyTorch version."
+                "TorchCodec audio runtime validation failed. "
+                "FFmpeg shared libraries must be visible to TorchCodec and the installed "
+                f"TorchCodec/PyTorch versions must be compatible. Provider detail: {detail[:8000]}"
             ) from exc
 
         self._audio_runtime_validated = True
-
-    @staticmethod
-    def _torchcodec_audio_decoder() -> Any:
-        from torchcodec.decoders import AudioDecoder
-
-        return AudioDecoder
 
     def _create_pipeline(self) -> Any:
         if self.pipeline_factory is not None:
