@@ -13,6 +13,7 @@ All notable changes to toolsApi-worker are documented here.
 
 ### Fixed
 
+- Diarization debug failures now retain the bounded provider exception class and redacted message so `process_failed` can be diagnosed remotely without exposing transcript text, credentials or local filesystem paths. Fixes #55.
 - Keep Whisper heartbeat/progress independent while completion, failure or diarization-only acknowledgement is unresolved, then stop initiating new reports immediately after ToolsAPI accepts terminal state. A same-worker/same-lease/same-generation progress request already in flight at that boundary is handled as an accepted-terminal no-op by ToolsAPI instead of reopening state or producing a noisy lease-loss race. Fixes #48 and #50.
 - Apple Silicon MLX jobs now report `Preparing MLX Whisper` while the combined MLX call may still be loading/downloading the model and preparing audio. The stage switches to `Transcribing` only when the first timestamped transcript segment arrives, avoiding a misleading 20% "transcription started" state with no transcript evidence. Fixes #48.
 - Retry active Whisper heartbeat/progress reports on a shorter bounded cadence after transient transport/API failures so a healthy long-running transcription or diarization does not consume its lease budget waiting another full steady-state heartbeat interval. Only accepted ToolsAPI reports refresh ownership and HTTP 409 remains definitive lease loss. This repairs the production job #78 diarization-rerun lease-expiry pattern. Fixes #45.
