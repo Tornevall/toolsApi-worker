@@ -18,6 +18,7 @@ def _windows_ffmpeg_candidates() -> list[Path]:
         candidates.append(Path(configured))
 
     candidates.append(Path(sys.prefix) / "ffmpeg" / "bin")
+    candidates.append(Path(sys.prefix).parent / "ffmpeg" / "bin")
 
     path_value = os.environ.get("PATH", "")
     for raw in path_value.split(os.pathsep):
