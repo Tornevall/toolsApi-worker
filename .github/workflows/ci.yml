@@ -168,7 +168,7 @@ jobs:
           if ($install -notmatch 'get_cuda_device_count') { throw 'CTranslate2 CUDA validation is missing from installer.' }
           if ($install -notmatch 'torch\.cuda\.is_available') { throw 'PyTorch CUDA validation is missing from installer.' }
           if ($install -notmatch 'torch\.ones') { throw 'PyTorch CUDA kernel validation is missing from installer.' }
-          if ($install -notmatch 'gpl-shared\.zip') { throw 'Shared FFmpeg repair path is missing from Windows installer.' }
+          if ($install -notmatch 'lgpl-shared\.zip') { throw 'Shared FFmpeg repair path is missing from Windows installer.' }
           if ($install -notmatch 'checksums\.sha256') { throw 'Shared FFmpeg checksum manifest validation is missing.' }
           if ($install -notmatch 'Get-FileHash') { throw 'Shared FFmpeg SHA-256 validation is missing.' }
           if ($install -notmatch 'toolsapi_worker\.audio_runtime') { throw 'TorchCodec audio runtime probe is missing from Windows installer.' }
