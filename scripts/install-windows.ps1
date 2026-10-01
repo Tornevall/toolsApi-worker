@@ -229,10 +229,33 @@ function Test-TorchCodecAudioRuntime {
         }
     }
 
-    $Output = @(& $VenvPython -m toolsapi_worker.audio_runtime 2>&1)
-    return @{
-        Success = ($LASTEXITCODE -eq 0)
-        Output = ($Output -join " ")
+    $StdoutPath = [System.IO.Path]::GetTempFileName()
+    $StderrPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $Process = Start-Process `
+            -FilePath $VenvPython `
+            -ArgumentList @("-m", "toolsapi_worker.audio_runtime") `
+            -Wait `
+            -PassThru `
+            -NoNewWindow `
+            -RedirectStandardOutput $StdoutPath `
+            -RedirectStandardError $StderrPath
+
+        $Output = @()
+        if (Test-Path $StdoutPath) {
+            $Output += @(Get-Content $StdoutPath -ErrorAction SilentlyContinue)
+        }
+        if (Test-Path $StderrPath) {
+            $Output += @(Get-Content $StderrPath -ErrorAction SilentlyContinue)
+        }
+
+        return @{
+            Success = ($Process.ExitCode -eq 0)
+            Output = ($Output -join " ")
+        }
+    } finally {
+        Remove-Item $StdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item $StderrPath -Force -ErrorAction SilentlyContinue
     }
 }
 
