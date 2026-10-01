@@ -12,6 +12,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 - A worker may process or report on a job only while its current lease is valid.
 - Heartbeat/progress refreshes ownership through ToolsAPI. Workers never decide that their own lease timeout has been extended.
 - Long-running execution must keep heartbeat independent from model output/progress events. A slow model load, diarization model load or slow segment generator must not make a healthy worker appear dead.
+- Pyannote provider progress is additive to the independent lease heartbeat. Forward only bounded stage names and provider-supplied completed/total counts; derive only a stage-local percentage when total is trustworthy. Never invent a whole-diarization percentage or include transcript/media/credential data in progress.
 - ToolsAPI decides when a worker has timed out based on the latest accepted report.
 - Expired or superseded leases must be rejected for media access, progress, failure and completion submissions.
 - Never allow two current lease generations for the same delegated job.
