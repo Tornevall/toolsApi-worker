@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import re
+import tempfile
+import wave
 from pathlib import Path
 from typing import Any, Callable
 
@@ -21,6 +23,7 @@ class PyannoteDiarizer:
         self.pipeline_factory = pipeline_factory
         self.torch_module = torch_module
         self._cuda_probe_result: bool | None = None
+        self._audio_runtime_validated = False
 
     @property
     def supported(self) -> bool:
@@ -147,6 +150,42 @@ class PyannoteDiarizer:
                     exception=exc,
                 )
             return segments, result
+
+    def validate_audio_runtime(self) -> None:
+        """Prove that TorchCodec can decode audio before this worker claims Whisper work."""
+        if self._audio_runtime_validated:
+            return
+
+        try:
+            decoder_class = self._torchcodec_audio_decoder()
+            with tempfile.TemporaryDirectory(prefix="toolsapi-torchcodec-") as root:
+                media = Path(root) / "probe.wav"
+                with wave.open(str(media), "wb") as handle:
+                    handle.setnchannels(1)
+                    handle.setsampwidth(2)
+                    handle.setframerate(16000)
+                    handle.writeframes(b"\x00\x00" * 1600)
+
+                decoder = decoder_class(str(media))
+                samples = decoder.get_all_samples()
+                data = getattr(samples, "data", None)
+                numel = getattr(data, "numel", None)
+                if data is None or not callable(numel) or int(numel()) < 1:
+                    raise RuntimeError("TorchCodec AudioDecoder returned no samples for the startup probe.")
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                "TorchCodec audio runtime validation failed. On Windows, FFmpeg must be a shared/full-shared build "
+                "whose DLLs are visible to the worker process, and the installed TorchCodec version must be compatible "
+                "with the installed PyTorch version."
+            ) from exc
+
+        self._audio_runtime_validated = True
+
+    @staticmethod
+    def _torchcodec_audio_decoder() -> Any:
+        from torchcodec.decoders import AudioDecoder
+
+        return AudioDecoder
 
     def _create_pipeline(self) -> Any:
         if self.pipeline_factory is not None:
@@ -455,12 +494,14 @@ class PyannoteDiarizer:
         message = re.sub(r"(?i)\\b[A-Z]:\\\\[^\\r\\n\\t\\\"']+", "[PATH]", message)
         message = re.sub(r"(?<![:/\\w])/(?:[^ \\r\\n\\t\\\"']+)", "[PATH]", message)
 
-        return message[:1000]
+        return message[:8000]
 
     def _normalize_error(self, exc: Exception) -> tuple[str, str]:
         text = str(exc).strip()
         lowered = text.lower()
 
+        if "libtorchcodec" in lowered or "torchcodec audio runtime validation failed" in lowered or ("ffmpeg" in lowered and "full-shared" in lowered):
+            return "media_runtime_unavailable", "TorchCodec audio runtime could not load its FFmpeg/PyTorch dependencies on this worker."
         if "dependencies are missing" in lowered or "no module named" in lowered or "modulenotfounderror" in lowered:
             return "missing_dependency", "Speaker diarization dependencies are missing on this worker."
         if "no speaker turns" in lowered:
