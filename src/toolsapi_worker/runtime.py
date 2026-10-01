@@ -590,6 +590,7 @@ class WorkerRuntime:
                     compute_type=self.config.whisper_compute_type,
                     accepts_url_sources=self.config.accepts_url_sources,
                     supports_diarization=bool(getattr(self.diarizer, "supported", False)),
+                    supports_diarization_debug=bool(getattr(self.diarizer, "supported", False)),
                 )
             except WorkerAuthenticationError:
                 raise
