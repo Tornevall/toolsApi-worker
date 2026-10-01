@@ -84,7 +84,7 @@ class ToolsApiClient:
         compute_type: str = "int8",
         accepts_url_sources: bool = False,
         supports_diarization: bool = True,
-        supports_diarization_debug: bool = True,
+        supports_diarization_debug: bool = False,
     ) -> WhisperClaim | None:
         advertised_models = [str(model).strip().lower() for model in models if str(model).strip()]
         if not advertised_models:
@@ -125,6 +125,12 @@ class ToolsApiClient:
         if operation not in {"transcribe", "diarize"}:
             raise WorkerApiError(f"Unsupported Whisper worker operation {operation!r}")
 
+        diarization_debug = bool(job.get("diarization_debug", False))
+        if diarization_debug and not supports_diarization_debug:
+            raise WorkerApiError(
+                "ToolsAPI assigned a diarization-debug job to a worker that did not advertise debug support"
+            )
+
         input_descriptor = job.get("input")
         if not isinstance(input_descriptor, dict):
             raise WorkerApiError("ToolsAPI returned a Whisper claim without an input descriptor")
@@ -143,7 +149,7 @@ class ToolsApiClient:
                 model=str(job.get("model") or ""),
                 language=str(job.get("language") or ""),
                 diarization_requested=bool(job.get("diarization_requested", operation == "diarize")),
-                diarization_debug=bool(job.get("diarization_debug", False)),
+                diarization_debug=diarization_debug,
                 input=dict(input_descriptor),
             )
         except (KeyError, TypeError, ValueError) as exc:
