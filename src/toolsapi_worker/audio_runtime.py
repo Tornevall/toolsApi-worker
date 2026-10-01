@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import io
 import os
 import sys
-import tempfile
 import wave
 from pathlib import Path
 from typing import Any
@@ -72,20 +72,20 @@ def _audio_decoder_class() -> Any:
 def validate_torchcodec_audio_runtime() -> dict[str, str | None]:
     decoder_class = _audio_decoder_class()
 
-    with tempfile.TemporaryDirectory(prefix="toolsapi-torchcodec-") as root:
-        media = Path(root) / "probe.wav"
-        with wave.open(str(media), "wb") as handle:
-            handle.setnchannels(1)
-            handle.setsampwidth(2)
-            handle.setframerate(16000)
-            handle.writeframes(b"\x00\x00" * 1600)
+    media = io.BytesIO()
+    with wave.open(media, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * 1600)
+    media.seek(0)
 
-        decoder = decoder_class(str(media))
-        samples = decoder.get_all_samples()
-        data = getattr(samples, "data", None)
-        numel = getattr(data, "numel", None)
-        if data is None or not callable(numel) or int(numel()) < 1:
-            raise RuntimeError("TorchCodec AudioDecoder returned no samples for the startup probe.")
+    decoder = decoder_class(media)
+    samples = decoder.get_all_samples()
+    data = getattr(samples, "data", None)
+    numel = getattr(data, "numel", None)
+    if data is None or not callable(numel) or int(numel()) < 1:
+        raise RuntimeError("TorchCodec AudioDecoder returned no samples for the startup probe.")
 
     ffmpeg_bin_dir = prepare_windows_ffmpeg_runtime()
     return {

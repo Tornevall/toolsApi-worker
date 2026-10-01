@@ -23,8 +23,10 @@ class _Annotation:
 class _Pipeline:
     def __init__(self):
         self.device = None
+        self.sources = []
 
-    def __call__(self, _path, **_kwargs):
+    def __call__(self, source, **_kwargs):
+        self.sources.append(source)
         return _Annotation()
 
     def to(self, device):
@@ -129,9 +131,10 @@ class WorkerDiarizationTest(unittest.TestCase):
         )
 
     def test_maps_pyannote_turns_onto_whisper_segments(self):
+        pipeline = _Pipeline()
         diarizer = PyannoteDiarizer(
             self.config(),
-            pipeline_factory=lambda _source, token=None: _Pipeline(),
+            pipeline_factory=lambda _source, token=None: pipeline,
         )
         heartbeat = _Heartbeat()
         segments = [
@@ -151,6 +154,9 @@ class WorkerDiarizationTest(unittest.TestCase):
         self.assertEqual("SPEAKER_00", mapped[0]["speaker_label"])
         self.assertEqual("SPEAKER_01", mapped[1]["speaker_label"])
         self.assertTrue(any(label == "Speaker diarization" for _, label, _ in heartbeat.updates))
+        self.assertEqual(1, len(pipeline.sources))
+        self.assertTrue(hasattr(pipeline.sources[0], "read"))
+        self.assertFalse(isinstance(pipeline.sources[0], (str, Path)))
 
     def test_debug_mode_explains_overlap_mapping_without_transcript_text_or_secrets(self):
         diarizer = PyannoteDiarizer(
