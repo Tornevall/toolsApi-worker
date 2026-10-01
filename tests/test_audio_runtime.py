@@ -23,8 +23,10 @@ class _Samples:
 
 
 class _Decoder:
-    def __init__(self, path):
-        self.path = Path(path)
+    last_source = None
+
+    def __init__(self, source):
+        type(self).last_source = source
 
     def get_all_samples(self):
         return _Samples(1)
@@ -41,6 +43,9 @@ class AudioRuntimeTest(unittest.TestCase):
             result = audio_runtime.validate_torchcodec_audio_runtime()
 
         self.assertEqual("ok", result["status"])
+        self.assertTrue(hasattr(_Decoder.last_source, "read"))
+        self.assertTrue(hasattr(_Decoder.last_source, "seek"))
+        self.assertFalse(isinstance(_Decoder.last_source, (str, Path)))
 
     def test_probe_rejects_decoder_that_returns_no_samples(self):
         with patch("toolsapi_worker.audio_runtime._audio_decoder_class", return_value=_EmptyDecoder):
