@@ -7,7 +7,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = New-Object Security
 if errorlevel 1 (
     echo Requesting administrator privileges...
     powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -WorkingDirectory '%~dp0' -Verb RunAs"
-    exit /b
+    if errorlevel 1 (
+        echo Administrator elevation was cancelled or failed.
+        exit /b 1
+    )
+    exit /b 0
 )
 
 echo Stopping ToolsAPI Worker...
