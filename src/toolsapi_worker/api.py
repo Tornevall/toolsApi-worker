@@ -45,6 +45,7 @@ class WhisperClaim:
     model: str
     language: str
     diarization_requested: bool
+    diarization_debug: bool
     input: dict[str, Any]
 
     @property
@@ -83,6 +84,7 @@ class ToolsApiClient:
         compute_type: str = "int8",
         accepts_url_sources: bool = False,
         supports_diarization: bool = True,
+        supports_diarization_debug: bool = True,
     ) -> WhisperClaim | None:
         advertised_models = [str(model).strip().lower() for model in models if str(model).strip()]
         if not advertised_models:
@@ -98,6 +100,7 @@ class ToolsApiClient:
                 "compute_type": compute_type,
                 "accepts_url_sources": bool(accepts_url_sources),
                 "supports_diarization": bool(supports_diarization),
+                "supports_diarization_debug": bool(supports_diarization_debug),
             },
         )
         if int(payload.get("claim_policy_version") or 0) < self.CLAIM_POLICY_VERSION:
@@ -140,6 +143,7 @@ class ToolsApiClient:
                 model=str(job.get("model") or ""),
                 language=str(job.get("language") or ""),
                 diarization_requested=bool(job.get("diarization_requested", operation == "diarize")),
+                diarization_debug=bool(job.get("diarization_debug", False)),
                 input=dict(input_descriptor),
             )
         except (KeyError, TypeError, ValueError) as exc:
