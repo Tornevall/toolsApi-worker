@@ -34,6 +34,9 @@ class InstallationAudioRuntimeContractTest(unittest.TestCase):
         self.assertIn('TOOLS_WORKER_FFMPEG_BIN_DIR', installer)
         self.assertIn('-m toolsapi_worker.audio_runtime', installer)
         self.assertIn('avcodec-*.dll', installer)
+        stop_index = installer.index('Stopping $ServiceName before updating the worker runtime')
+        pip_index = installer.index('Could not update pip, setuptools and wheel')
+        self.assertLess(stop_index, pip_index)
 
     def test_start_bat_self_elevates_then_updates_and_installs(self):
         start = self.read("start.bat")
