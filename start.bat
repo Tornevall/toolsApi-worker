@@ -3,6 +3,13 @@ setlocal
 
 cd /d "%~dp0"
 
+net session >nul 2>&1
+if errorlevel 1 (
+    echo Requesting administrator privileges...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -WorkingDirectory '%~dp0' -Verb RunAs"
+    exit /b
+)
+
 echo Stopping ToolsAPI Worker...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$service = Get-Service -Name 'ToolsAPIWorker' -ErrorAction SilentlyContinue; if ($service -and $service.Status -ne 'Stopped') { Stop-Service -Name 'ToolsAPIWorker' -Force; $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30)) }"
