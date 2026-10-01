@@ -92,6 +92,8 @@ ToolsAPI validates current ownership before streaming the file. HTTP `409` means
 
 ## Heartbeat/progress
 
+Speaker diarization keeps the independent lease heartbeat active and may additionally publish a bounded structured `diarization_progress` object in stage detail. It contains the current pyannote stage plus provider-supplied `completed`/`total` and a derived stage-local percentage only when the total is trustworthy. This is not a whole-run progress estimate and contains no transcript text, media path or credentials.
+
 Transcript operations send progress through:
 
 `POST /api/whisper/worker/jobs/{job_id}/progress`
