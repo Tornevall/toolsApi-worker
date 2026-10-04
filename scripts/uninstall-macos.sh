@@ -14,7 +14,11 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+SERVICE_TARGET="${DOMAIN}/${PLIST_LABEL}"
+
+launchctl bootout "${SERVICE_TARGET}" >/dev/null 2>&1 || true
 launchctl bootout "${DOMAIN}" "${PLIST_FILE}" >/dev/null 2>&1 || true
+launchctl remove "${PLIST_LABEL}" >/dev/null 2>&1 || true
 rm -f "${PLIST_FILE}"
 
 if [[ "${REMOVE_CONFIG}" == "true" ]]; then
