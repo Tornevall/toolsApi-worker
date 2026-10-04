@@ -66,8 +66,63 @@ PY
 chmod 0600 "${PLIST_FILE}"
 plutil -lint "${PLIST_FILE}" >/dev/null
 DOMAIN="gui/$(id -u)"
+SERVICE_TARGET="${DOMAIN}/${PLIST_LABEL}"
 
-launchctl bootout "${DOMAIN}" "${PLIST_FILE}" >/dev/null 2>&1 || true
+wait_for_launchd_removal() {
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if ! launchctl print "${SERVICE_TARGET}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+unload_existing_launch_agent() {
+  launchctl bootout "${SERVICE_TARGET}" >/dev/null 2>&1 || true
+  launchctl bootout "${DOMAIN}" "${PLIST_FILE}" >/dev/null 2>&1 || true
+
+  if wait_for_launchd_removal; then
+    return 0
+  fi
+
+  # Older/stale launchd registrations can survive path-based bootout.
+  # remove is a last-resort cleanup scoped to this worker label.
+  launchctl remove "${PLIST_LABEL}" >/dev/null 2>&1 || true
+
+  if wait_for_launchd_removal; then
+    return 0
+  fi
+
+  echo "Could not unload existing launchd service ${SERVICE_TARGET}." >&2
+  launchctl print "${SERVICE_TARGET}" >&2 || true
+  return 1
+}
+
+bootstrap_launch_agent() {
+  local bootstrap_status=0
+
+  launchctl bootstrap "${DOMAIN}" "${PLIST_FILE}" || bootstrap_status=$?
+  if [[ "${bootstrap_status}" -eq 0 ]]; then
+    return 0
+  fi
+
+  echo "Failed to bootstrap launchd service ${SERVICE_TARGET} from ${PLIST_FILE} (exit ${bootstrap_status})." >&2
+  echo "launchd service state:" >&2
+  if ! launchctl print "${SERVICE_TARGET}" >&2; then
+    echo "  ${SERVICE_TARGET} is not registered." >&2
+  fi
+  echo "LaunchAgent plist:" >&2
+  /usr/bin/stat -f '  owner=%Su mode=%Sp path=%N' "${PLIST_FILE}" >&2 || true
+  echo "Worker executable:" >&2
+  /usr/bin/stat -f '  owner=%Su mode=%Sp path=%N' "${PREFIX}/.venv/bin/toolsapi-worker" >&2 || true
+  echo "Do not rerun this per-user installer as root." >&2
+  return "${bootstrap_status}"
+}
+
+unload_existing_launch_agent
+
 if "${PREFIX}/.venv/bin/python" - "${ENV_FILE}" <<'PY'
 import sys
 from toolsapi_worker.config import WorkerConfig
@@ -82,9 +137,9 @@ configured = bool(
 raise SystemExit(0 if configured else 1)
 PY
 then
-  launchctl bootstrap "${DOMAIN}" "${PLIST_FILE}"
-  launchctl enable "${DOMAIN}/${PLIST_LABEL}" >/dev/null 2>&1 || true
-  launchctl kickstart -k "${DOMAIN}/${PLIST_LABEL}"
+  bootstrap_launch_agent
+  launchctl enable "${SERVICE_TARGET}" >/dev/null 2>&1 || true
+  launchctl kickstart -k "${SERVICE_TARGET}"
   echo "Installed and started ${PLIST_LABEL}."
 else
   echo "Installed ${PLIST_LABEL}, but it was not started because ToolsAPI credentials are not configured."

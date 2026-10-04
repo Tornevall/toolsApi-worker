@@ -154,6 +154,8 @@ Reinstall preserves the existing `.env`. The service uses `~/Library/LaunchAgent
 ~/Library/Logs/toolsapi-worker.error.log
 ```
 
+The installer is intentionally per-user and must not be run with `sudo`. Reinstall removes an existing launchd registration by both service target and plist path before bootstrapping the replacement. If launchd still refuses the new registration, the installer prints the service target plus plist and executable ownership/mode diagnostics instead of only surfacing the generic `Bootstrap failed: 5` message.
+
 Uninstall the runtime and launchd service while preserving `.env`:
 
 ```bash

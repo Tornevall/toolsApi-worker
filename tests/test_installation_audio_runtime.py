@@ -20,6 +20,20 @@ class InstallationAudioRuntimeContractTest(unittest.TestCase):
         self.assertIn('scripts/ensure-ffmpeg.sh', installer)
         self.assertIn('-m toolsapi_worker.audio_runtime', installer)
 
+    def test_macos_installer_replaces_stale_launchd_registration(self):
+        installer = self.read("scripts/install-macos.sh")
+        self.assertIn('SERVICE_TARGET="${DOMAIN}/${PLIST_LABEL}"', installer)
+        self.assertIn('launchctl bootout "${SERVICE_TARGET}"', installer)
+        self.assertIn('launchctl bootout "${DOMAIN}" "${PLIST_FILE}"', installer)
+        self.assertIn('launchctl remove "${PLIST_LABEL}"', installer)
+        self.assertIn('wait_for_launchd_removal', installer)
+        self.assertIn('launchctl print "${SERVICE_TARGET}"', installer)
+        self.assertIn('Do not rerun this per-user installer as root.', installer)
+
+        uninstaller = self.read("scripts/uninstall-macos.sh")
+        self.assertIn('launchctl bootout "${SERVICE_TARGET}"', uninstaller)
+        self.assertIn('launchctl remove "${PLIST_LABEL}"', uninstaller)
+
     def test_local_make_install_uses_same_audio_runtime_validation(self):
         makefile = self.read("Makefile")
         self.assertIn('bash ./scripts/ensure-ffmpeg.sh', makefile)

@@ -215,11 +215,27 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PATH' "$PLIST_DIR/net.tornevall.toolsapi-worker.plist" | grep -q "$RUNNER_TEMP/fake-bin"
 
           printf '\nTOOLS_INSTALL_TEST_SENTINEL=preserve-me\n' >> "$ENV_FILE"
+          sed -i '' \
+            -e 's#^TOOLS_API_BASE_URL=.*#TOOLS_API_BASE_URL=http://127.0.0.1:9#' \
+            -e 's#^TOOLS_WORKER_TOKEN=.*#TOOLS_WORKER_TOKEN=ci-worker-token#' \
+            -e 's#^TOOLS_WORKER_ID=.*#TOOLS_WORKER_ID=macos-launchd-ci#' \
+            -e 's#^TOOLS_WORKER_ENABLED_HANDLERS=.*#TOOLS_WORKER_ENABLED_HANDLERS=job_search.search#' \
+            -e 's#^TOOLS_WORKER_OPENAI_API_KEY=.*#TOOLS_WORKER_OPENAI_API_KEY=ci-openai-key#' \
+            -e 's#^TOOLS_WORKER_JOB_SEARCH_CONCURRENCY=.*#TOOLS_WORKER_JOB_SEARCH_CONCURRENCY=1#' \
+            "$ENV_FILE"
+
+          DOMAIN="gui/$(id -u)"
+          SERVICE_TARGET="$DOMAIN/net.tornevall.toolsapi-worker"
+          launchctl bootstrap "$DOMAIN" "$PLIST_DIR/net.tornevall.toolsapi-worker.plist"
+          launchctl print "$SERVICE_TARGET" >/dev/null
+
           bash ./scripts/install-macos.sh
+          launchctl print "$SERVICE_TARGET" >/dev/null
           grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' "$ENV_FILE"
           /usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PATH' "$PLIST_DIR/net.tornevall.toolsapi-worker.plist" | grep -q "$RUNNER_TEMP/fake-bin"
 
           bash ./scripts/uninstall-macos.sh
+          ! launchctl print "$SERVICE_TARGET" >/dev/null 2>&1
           test -f "$ENV_FILE"
           grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' "$ENV_FILE"
           test ! -e "$PREFIX/.venv"
