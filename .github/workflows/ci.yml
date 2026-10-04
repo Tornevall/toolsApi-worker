@@ -231,75 +231,13 @@ jobs:
 
           bash ./scripts/install-macos.sh
           launchctl print "$SERVICE_TARGET" >/dev/null
-          grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me
-  system-install:
-    strategy:
-      matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Ubuntu prerequisites
-        run: sudo apt-get update && sudo apt-get install -y python3-venv
-      - name: Run system installer
-        run: sudo ./scripts/install.sh
-      - name: Verify installed CLI, .env and systemd unit
-        run: |
-          /opt/toolsapi-worker/.venv/bin/toolsapi-worker status | grep -q 'models=large,turbo,medium,small,base,tiny'
-          systemctl is-enabled toolsapi-worker.service
-          sudo test -f /opt/toolsapi-worker/.env
-          sudo grep -q '^TOOLS_WORKER_DIARIZATION_ENABLED=true$' /opt/toolsapi-worker/.env
-          test -f /etc/systemd/system/toolsapi-worker.service
-          grep -q '^EnvironmentFile=/opt/toolsapi-worker/.env$' /etc/systemd/system/toolsapi-worker.service
-      - name: Verify installer is idempotent and preserves .env
-        run: |
-          printf '\nTOOLS_INSTALL_TEST_SENTINEL=preserve-me\n' | sudo tee -a /opt/toolsapi-worker/.env >/dev/null
-          sudo ./scripts/install.sh
-          sudo grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' /opt/toolsapi-worker/.env
-      - name: Uninstall while retaining .env
-        run: |
-          sudo ./scripts/uninstall.sh
-          sudo test -f /opt/toolsapi-worker/.env
-          sudo grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' /opt/toolsapi-worker/.env
-          test ! -e /opt/toolsapi-worker/.venv
- "$ENV_FILE"
+          grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' "$ENV_FILE"
           /usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PATH' "$PLIST_DIR/net.tornevall.toolsapi-worker.plist" | grep -q "$RUNNER_TEMP/fake-bin"
 
           bash ./scripts/uninstall-macos.sh
           ! launchctl print "$SERVICE_TARGET" >/dev/null 2>&1
           test -f "$ENV_FILE"
-          grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me
-  system-install:
-    strategy:
-      matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Ubuntu prerequisites
-        run: sudo apt-get update && sudo apt-get install -y python3-venv
-      - name: Run system installer
-        run: sudo ./scripts/install.sh
-      - name: Verify installed CLI, .env and systemd unit
-        run: |
-          /opt/toolsapi-worker/.venv/bin/toolsapi-worker status | grep -q 'models=large,turbo,medium,small,base,tiny'
-          systemctl is-enabled toolsapi-worker.service
-          sudo test -f /opt/toolsapi-worker/.env
-          sudo grep -q '^TOOLS_WORKER_DIARIZATION_ENABLED=true$' /opt/toolsapi-worker/.env
-          test -f /etc/systemd/system/toolsapi-worker.service
-          grep -q '^EnvironmentFile=/opt/toolsapi-worker/.env$' /etc/systemd/system/toolsapi-worker.service
-      - name: Verify installer is idempotent and preserves .env
-        run: |
-          printf '\nTOOLS_INSTALL_TEST_SENTINEL=preserve-me\n' | sudo tee -a /opt/toolsapi-worker/.env >/dev/null
-          sudo ./scripts/install.sh
-          sudo grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' /opt/toolsapi-worker/.env
-      - name: Uninstall while retaining .env
-        run: |
-          sudo ./scripts/uninstall.sh
-          sudo test -f /opt/toolsapi-worker/.env
-          sudo grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' /opt/toolsapi-worker/.env
-          test ! -e /opt/toolsapi-worker/.venv
- "$ENV_FILE"
+          grep -q '^TOOLS_INSTALL_TEST_SENTINEL=preserve-me$' "$ENV_FILE"
           test ! -e "$PREFIX/.venv"
           test ! -e "$PLIST_DIR/net.tornevall.toolsapi-worker.plist"
 
