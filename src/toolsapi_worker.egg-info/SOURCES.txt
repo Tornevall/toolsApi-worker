@@ -2,6 +2,7 @@ README.md
 pyproject.toml
 src/toolsapi_worker/__init__.py
 src/toolsapi_worker/api.py
+src/toolsapi_worker/audio_runtime.py
 src/toolsapi_worker/cli.py
 src/toolsapi_worker/config.py
 src/toolsapi_worker/diagnostics.py
@@ -17,6 +18,7 @@ src/toolsapi_worker.egg-info/entry_points.txt
 src/toolsapi_worker.egg-info/requires.txt
 src/toolsapi_worker.egg-info/top_level.txt
 tests/test_api.py
+tests/test_audio_runtime.py
 tests/test_bootstrap_venv.py
 tests/test_cli.py
 tests/test_config.py
@@ -24,6 +26,7 @@ tests/test_detect_runtime_device.py
 tests/test_diagnostics.py
 tests/test_diarization.py
 tests/test_heartbeat_retry.py
+tests/test_installation_audio_runtime.py
 tests/test_job_search.py
 tests/test_live_progress.py
 tests/test_repository_deployment_contract.py
