@@ -1,3 +1,8 @@
+## 2026-10-24 - Windows Python bootstrap
+
+- Automatically provision Python 3.10 with winget on Windows when no compatible Python 3.10+ interpreter is present, without replacing an existing valid interpreter or an explicit Python override.
+- Validate the installed runtime before virtual environment and dependency setup; fail clearly if winget is missing or unsuccessful.
+
 ## 2026-10-24 - Fresh Windows service installation
 
 - `start.bat` now skips stopping a nonexistent or already stopped ToolsAPIWorker service and continues installing dependencies. Real failures stopping an existing running service remain fatal.
