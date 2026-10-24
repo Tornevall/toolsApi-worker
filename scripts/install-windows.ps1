@@ -31,16 +31,18 @@ function Resolve-PythonCommand {
         $command = Get-Command $Requested -ErrorAction Stop
         $candidate = @($command.Source)
         if (Test-PythonCommand -Command $candidate) {
-            return $candidate
+            return ,$candidate
         }
-        throw "Requested Python command '$Requested' is not a usable Python 3.10+ runtime. Install Python 3.10 or newer and rerun this installer."
+        throw "Requested Python command '$Requested' is not a usable Python 3.10+ runtime. Explicit Python selections are never replaced automatically."
     }
 
+    # The launcher can resolve an installed interpreter even when python.exe is
+    # absent from PATH. Check it before attempting to install anything.
     $pyCommand = Get-Command py -ErrorAction SilentlyContinue
     if ($pyCommand) {
         $candidate = @($pyCommand.Source, "-3")
         if (Test-PythonCommand -Command $candidate) {
-            return $candidate
+            return ,$candidate
         }
     }
 
@@ -48,11 +50,49 @@ function Resolve-PythonCommand {
     if ($pythonCommand) {
         $candidate = @($pythonCommand.Source)
         if (Test-PythonCommand -Command $candidate) {
-            return $candidate
+            return ,$candidate
         }
     }
 
-    throw "Python 3.10 or newer is required. Install Python from python.org or install the Python Launcher, then rerun this installer. The Microsoft Store app execution alias is not sufficient for this service installation."
+    # winget may not be available in all elevated sessions. Install the
+    # supported 3.10 baseline without replacing any existing interpreter.
+    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if (-not $winget) {
+        throw "Python 3.10 or newer is required, and winget.exe is unavailable. Install Python 3.10+ or enable Windows App Installer, then rerun."
+    }
+
+    Write-Host "No usable Python 3.10+ found. Installing Python 3.10 with winget..."
+    & $winget.Source install --id Python.Python.3.10 --exact --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity
+    if ($LASTEXITCODE -ne 0) {
+        throw "winget could not install Python 3.10 (exit code $LASTEXITCODE). Check App Installer, network access and winget package sources."
+    }
+
+    # Windows installers often update the registry PATH without updating this
+    # process. Resolve the executable directly instead of relying on PATH.
+    $locations = @(
+        (Join-Path $env:ProgramFiles "Python310\\python.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\\Python\\Python310\\python.exe")
+    )
+    if (${env:ProgramFiles(x86)}) {
+        $locations += Join-Path ${env:ProgramFiles(x86)} "Python310\\python.exe"
+    }
+    foreach ($location in $locations) {
+        if ((Test-Path $location) -and (Test-PythonCommand -Command @($location))) {
+            return ,@($location)
+        }
+    }
+
+    # The launcher may now be installed, even if it was not initially.
+    foreach ($launcher in @(
+        (Join-Path $env:WINDIR "py.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\\Python\\Launcher\\py.exe")
+    )) {
+        if ((Test-Path $launcher) -and (Test-PythonCommand -Command @($launcher, "-3.10"))) {
+            return ,@($launcher, "-3.10")
+        }
+    }
+
+    throw "winget completed but Python 3.10 could not be validated. Check the Python installation and rerun."
 }
 
 function Test-PythonCommand {
