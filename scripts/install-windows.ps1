@@ -62,7 +62,9 @@ function Resolve-PythonCommand {
     }
 
     Write-Host "No usable Python 3.10+ found. Installing Python 3.10 with winget..."
-    & $winget.Source install --id Python.Python.3.10 --exact --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity
+    # Native stdout must not escape this function: its only return value is
+    # the Python command array consumed by Invoke-ResolvedPython.
+    & $winget.Source install --id Python.Python.3.10 --exact --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "winget could not install Python 3.10 (exit code $LASTEXITCODE). Check App Installer, network access and winget package sources."
     }

@@ -21,6 +21,8 @@ class WindowsFreshInstallServiceTest(unittest.TestCase):
         self.assertIn("winget.exe", source)
         self.assertIn("--accept-package-agreements", source)
         self.assertIn("--accept-source-agreements", source)
+        self.assertIn("--disable-interactivity | Out-Host", source)
+        self.assertIn("return ,@($location)", source)
         self.assertIn("if ($LASTEXITCODE -ne 0)", source)
         self.assertIn("Test-PythonCommand -Command @($location)", source)
         self.assertLess(source.index("No usable Python 3.10+ found"), source.index("$PythonCommand = Resolve-PythonCommand"))
