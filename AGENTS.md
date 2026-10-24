@@ -144,3 +144,5 @@ Update README and CHANGELOG with user-visible, operational or contract changes. 
 - Keep terminal acknowledgement idempotent and keep the Job Search heartbeat active until accepted completion or definitive lease loss.
 
 - **Windows first-install service handling (2026-10-24)**: `start.bat` and `scripts/install-windows.ps1` must treat a missing or already stopped `ToolsAPIWorker` service as normal, continue installing dependencies, and fail only when an existing active service cannot be stopped safely.
+
+- Windows installers may bootstrap Python 3.10 via winget when no Python 3.10+ runtime exists. Respect explicit interpreter overrides, validate the installed runtime and never silently substitute Microsoft Store execution aliases.

@@ -371,3 +371,6 @@ A worker receiving HTTP 404 or 409 for a leased Whisper job abandons that lease 
 
 
 On Windows, `start.bat` supports both a fresh installation and updates. When the `ToolsAPIWorker` service is absent or already stopped, it proceeds directly to dependency installation; only a failure to stop an existing active service blocks the update.
+
+
+On Windows, the elevated installer accepts **Python 3.10 or newer**. If no compatible interpreter is found and no explicit `-Python` override is supplied, it automatically installs Python 3.10 using `winget` (`Python.Python.3.10`), validates it, and continues installing dependencies. If `winget` is unavailable or fails, the installer stops with an actionable error; existing compatible interpreters and explicit overrides are preserved.
