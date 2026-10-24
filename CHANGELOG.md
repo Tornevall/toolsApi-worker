@@ -1,3 +1,7 @@
+## 2026-10-24 - Windows winget output handling
+
+- Prevent winget's installation status text from being interpreted as the Python executable during fresh Windows worker setup.
+
 ## 2026-10-24 - Windows Python bootstrap
 
 - Automatically provision Python 3.10 with winget on Windows when no compatible Python 3.10+ interpreter is present, without replacing an existing valid interpreter or an explicit Python override.
