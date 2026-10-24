@@ -71,7 +71,8 @@ function Resolve-PythonCommand {
     # process. Resolve the executable directly instead of relying on PATH.
     $locations = @(
         (Join-Path $env:ProgramFiles "Python310\\python.exe"),
-        (Join-Path $env:LOCALAPPDATA "Programs\\Python\\Python310\\python.exe")
+        (Join-Path $env:LOCALAPPDATA "Programs\\Python\\Python310\\python.exe"),
+        (Join-Path $env:ProgramData "Python\\Python310\\python.exe")
     )
     if (${env:ProgramFiles(x86)}) {
         $locations += Join-Path ${env:ProgramFiles(x86)} "Python310\\python.exe"
