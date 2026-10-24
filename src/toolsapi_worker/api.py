@@ -489,8 +489,8 @@ class ToolsApiClient:
             raise WorkerAuthenticationError(
                 f"ToolsAPI rejected worker authentication with HTTP {exc.code}"
             ) from exc
-        if exc.code == 409:
+        if exc.code in (404, 409):
             raise WorkerLeaseLostError(
-                "ToolsAPI rejected the current worker lease or terminal payload; stop processing this job"
+                "ToolsAPI no longer accepts or cannot find the current worker job/lease; stop processing this job"
             ) from exc
         raise WorkerApiError(f"ToolsAPI worker request failed with HTTP {exc.code}") from exc

@@ -363,3 +363,8 @@ User-visible and contract changes are recorded in [CHANGELOG.md](CHANGELOG.md). 
 Enable `job_search.search` in `TOOLS_WORKER_ENABLED_HANDLERS` to let this worker execute ToolsAPI-prepared OpenAI Job Search requests. Job Search and Whisper use independent polling/execution loops, so a long transcription does not occupy the Job Search slot.
 
 The worker uses its normal ToolsAPI worker credential for claims and lease updates. OpenAI provider configuration is local to the worker host through `TOOLS_WORKER_OPENAI_API_KEY`; user/profile authorization and AI Credit eligibility remain server-side in ToolsAPI.
+
+
+### Deleted or missing leased jobs
+
+A worker receiving HTTP 404 or 409 for a leased Whisper job abandons that lease instead of retrying progress or completion indefinitely. The server remains authoritative for job existence and ownership; transient HTTP 503 failures are retryable.
