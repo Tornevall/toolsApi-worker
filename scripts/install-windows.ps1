@@ -266,9 +266,13 @@ $EffectiveTorchIndexUrl = Resolve-PyTorchIndexUrl -RequestedIndexUrl $TorchIndex
 $FreshConfig = -not (Test-Path $EnvFile)
 $ExistingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 
-if ($ExistingService -and $ExistingService.Status -ne "Stopped") {
+if ($null -eq $ExistingService) {
+    Write-Host "$ServiceName is not installed; proceeding with first-time dependency installation."
+} elseif ($ExistingService.Status -eq "Stopped") {
+    Write-Host "$ServiceName is already stopped; proceeding with installation."
+} else {
     Write-Host "Stopping $ServiceName before updating the worker runtime..."
-    Stop-Service -Name $ServiceName -Force
+    Stop-Service -Name $ServiceName -Force -ErrorAction Stop
     $ExistingService.WaitForStatus("Stopped", (New-TimeSpan -Seconds 30))
 }
 

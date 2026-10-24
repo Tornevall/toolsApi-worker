@@ -368,3 +368,6 @@ The worker uses its normal ToolsAPI worker credential for claims and lease updat
 ### Deleted or missing leased jobs
 
 A worker receiving HTTP 404 or 409 for a leased Whisper job abandons that lease instead of retrying progress or completion indefinitely. The server remains authoritative for job existence and ownership; transient HTTP 503 failures are retryable.
+
+
+On Windows, `start.bat` supports both a fresh installation and updates. When the `ToolsAPIWorker` service is absent or already stopped, it proceeds directly to dependency installation; only a failure to stop an existing active service blocks the update.

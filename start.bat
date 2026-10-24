@@ -16,12 +16,12 @@ echo Administrator elevation was cancelled or failed.
 exit /b 1
 
 :elevated
-echo Stopping ToolsAPI Worker...
+echo Checking ToolsAPI Worker service...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$service = Get-Service -Name 'ToolsAPIWorker' -ErrorAction SilentlyContinue; if ($service -and $service.Status -ne 'Stopped') { Stop-Service -Name 'ToolsAPIWorker' -Force; $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30)) }"
+    "$ErrorActionPreference = 'Stop'; try { $service = Get-Service -Name 'ToolsAPIWorker' -ErrorAction SilentlyContinue; if ($null -eq $service) { Write-Host 'ToolsAPIWorker is not installed; continuing with fresh installation.'; exit 0 }; if ($service.Status -eq 'Stopped') { Write-Host 'ToolsAPIWorker is already stopped.'; exit 0 }; Write-Host 'Stopping existing ToolsAPIWorker...'; Stop-Service -Name 'ToolsAPIWorker' -Force; $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30)); exit 0 } catch { Write-Error $_; exit 1 }"
 
 if errorlevel 1 (
-    echo Failed to stop ToolsAPIWorker.
+    echo Failed to stop an existing ToolsAPIWorker service.
     exit /b 1
 )
 

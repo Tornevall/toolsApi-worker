@@ -1,3 +1,8 @@
+## 2026-10-24 - Fresh Windows service installation
+
+- `start.bat` now skips stopping a nonexistent or already stopped ToolsAPIWorker service and continues installing dependencies. Real failures stopping an existing running service remain fatal.
+- The canonical Windows installer explicitly distinguishes fresh installation from an existing stopped/running service.
+
 ## 2026-10-24 - Stop retrying missing Whisper jobs
 
 - Treat HTTP 404 from leased worker endpoints as definitive lease loss, like HTTP 409. Stop progress and terminal retries for deleted jobs and return to claim polling; transient 503 responses remain retryable.

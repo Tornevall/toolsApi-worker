@@ -142,3 +142,5 @@ Update README and CHANGELOG with user-visible, operational or contract changes. 
 - Worker authentication is only the ToolsAPI lease credential. User ownership and AI Credit authorization are decided by ToolsAPI before claim.
 - The OpenAI provider credential is host-local runtime configuration and must never be returned to ToolsAPI or included in logs, progress or terminal errors.
 - Keep terminal acknowledgement idempotent and keep the Job Search heartbeat active until accepted completion or definitive lease loss.
+
+- **Windows first-install service handling (2026-10-24)**: `start.bat` and `scripts/install-windows.ps1` must treat a missing or already stopped `ToolsAPIWorker` service as normal, continue installing dependencies, and fail only when an existing active service cannot be stopped safely.
