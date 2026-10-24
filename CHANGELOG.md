@@ -1,3 +1,8 @@
+## 2026-10-24 - Stop retrying missing Whisper jobs
+
+- Treat HTTP 404 from leased worker endpoints as definitive lease loss, like HTTP 409. Stop progress and terminal retries for deleted jobs and return to claim polling; transient 503 responses remain retryable.
+- Add focused regression tests for missing progress and completion jobs.
+
 ## 0.2.0.dev0 - 2026-09-20
 
 - Added the independent `job_search.search` workload for ToolsAPI-prepared OpenAI Responses/web-search requests.
