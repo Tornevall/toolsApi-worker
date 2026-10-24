@@ -216,6 +216,26 @@ class ToolsApiClientTest(unittest.TestCase):
         self.assertEqual(47, body["progress_percent"])
 
     @patch("urllib.request.urlopen")
+    def test_missing_whisper_progress_job_ends_lease(self, urlopen):
+        urlopen.side_effect = urllib.error.HTTPError(
+            "https://tools.example.test/api/whisper/worker/jobs/123/progress",
+            404, "Not Found", {}, None,
+        )
+        with self.assertRaises(WorkerLeaseLostError):
+            self.client.report_whisper_progress(
+                self.claim(), 47, "Transcribing", "Working",
+            )
+
+    @patch("urllib.request.urlopen")
+    def test_missing_whisper_completion_ends_lease(self, urlopen):
+        urlopen.side_effect = urllib.error.HTTPError(
+            "https://tools.example.test/api/whisper/worker/jobs/123/complete",
+            404, "Not Found", {}, None,
+        )
+        with self.assertRaises(WorkerLeaseLostError):
+            self.client.complete_whisper(self.claim(), "Hello")
+
+    @patch("urllib.request.urlopen")
     def test_diarization_progress_uses_dedicated_endpoint(self, urlopen):
         urlopen.return_value = FakeResponse(
             {
