@@ -2,6 +2,7 @@
 
 - Eliminate the legacy CUDA-repair exception that could rewrite an existing Windows worker `.env` when service/credential state resembled an incomplete installation. Existing configuration is now immutable to the installer, and a SHA-256 check verifies unchanged bytes before the service starts.
 - Refuse to generate a default `.env` if an already registered Windows worker's configuration is missing; only brand-new installations may initialize the template and GPU compute defaults. Retain strict validation of explicitly configured CUDA compute types.
+- Preserve the original `.env` bytes during Windows uninstall without `-RemoveConfig`; the previous text-decoding/re-encoding path could alter encoding or newlines during a clean reinstall.
 - Add isolated PowerShell regression coverage for read-only existing configuration and first-install writes, plus source-contract checks. No automatic test CI restored.
 
 ## 2026-10-25 - Disable automatic worker test CI
