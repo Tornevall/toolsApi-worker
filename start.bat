@@ -30,7 +30,7 @@ echo Updating repository...
 git pull --ff-only
 
 if errorlevel 1 (
-    echo Git pull failed. Worker will NOT be started.
+    echo Git pull failed. Existing service state was not changed; installation will not run.
     exit /b 1
 )
 
