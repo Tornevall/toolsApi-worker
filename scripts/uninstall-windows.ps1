@@ -14,8 +14,10 @@ if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 
 $PreservedConfig = $null
-if ((Test-Path $EnvFile) -and -not $RemoveConfig) {
-    $PreservedConfig = Get-Content -Path $EnvFile -Raw
+if ((Test-Path -LiteralPath $EnvFile -PathType Leaf) -and -not $RemoveConfig) {
+    # Preserve exact bytes, including BOM, line endings and trailing newlines.
+    # Get-Content/Set-Content would re-encode operator-owned credentials.
+    $PreservedConfig = [System.IO.File]::ReadAllBytes($EnvFile)
 }
 
 $Service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
@@ -44,10 +46,10 @@ if (Test-Path $Prefix) {
     Remove-Item -Path $Prefix -Recurse -Force
 }
 
-if ($PreservedConfig -ne $null) {
+if ($null -ne $PreservedConfig) {
     New-Item -ItemType Directory -Path $Prefix -Force | Out-Null
-    Set-Content -Path $EnvFile -Value $PreservedConfig -Encoding UTF8
-    Write-Host "Removed worker runtime and Windows polling service. Preserved $EnvFile"
+    [System.IO.File]::WriteAllBytes($EnvFile, $PreservedConfig)
+    Write-Host "Removed worker runtime and Windows polling service. Preserved $EnvFile without re-encoding"
 } else {
     Write-Host "Removed worker runtime and Windows polling service."
 }

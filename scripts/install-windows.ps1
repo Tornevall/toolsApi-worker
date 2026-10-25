@@ -13,11 +13,17 @@ $ServiceName = "ToolsAPIWorker"
 $WorkerFfmpegRoot = Join-Path $Prefix "ffmpeg"
 $WorkerFfmpegBin = Join-Path $WorkerFfmpegRoot "bin"
 $GpuPolicyScript = Join-Path $SourceDir "scripts\windows-gpu-policy.ps1"
+$EnvPolicyScript = Join-Path $SourceDir "scripts\windows-env-policy.ps1"
 
 if (-not (Test-Path $GpuPolicyScript)) {
     throw "Windows GPU policy helper is missing: $GpuPolicyScript"
 }
 . $GpuPolicyScript
+
+if (-not (Test-Path $EnvPolicyScript)) {
+    throw "Windows .env preservation helper is missing: $EnvPolicyScript"
+}
+. $EnvPolicyScript
 
 $Principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -180,29 +186,6 @@ function Get-EnvValue {
     return ""
 }
 
-function Set-EnvValue {
-    param(
-        [string]$Name,
-        [string]$Value
-    )
-
-    $Lines = @(Get-Content $EnvFile)
-    $Pattern = "^$([regex]::Escape($Name))="
-    $Found = $false
-    $Updated = foreach ($Line in $Lines) {
-        if ($Line -match $Pattern) {
-            $Found = $true
-            "$Name=$Value"
-        } else {
-            $Line
-        }
-    }
-    if (-not $Found) {
-        $Updated += "$Name=$Value"
-    }
-    Set-Content -Path $EnvFile -Value $Updated -Encoding UTF8
-}
-
 function Test-Truthy {
     param([string]$Value)
     return $Value.Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")
@@ -306,8 +289,19 @@ $PythonCommand = Resolve-PythonCommand -Requested $Python
 $NativeNvidia = $null -ne (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue)
 $GpuComputeCapability = if ($NativeNvidia) { Get-NvidiaComputeCapability } else { "" }
 $EffectiveTorchIndexUrl = Resolve-PyTorchIndexUrl -RequestedIndexUrl $TorchIndexUrl -ComputeCapability $GpuComputeCapability
-$FreshConfig = -not (Test-Path $EnvFile)
+$FreshConfig = -not (Test-Path -LiteralPath $EnvFile)
 $ExistingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+if ($FreshConfig -and $null -ne $ExistingService) {
+    throw "Existing $ServiceName service has no runtime .env at $EnvFile. Restore its original configuration before reinstalling; refusing to create placeholder credentials."
+}
+$ExistingConfigHash = if (-not $FreshConfig) {
+    (Get-FileHash -LiteralPath $EnvFile -Algorithm SHA256).Hash
+} else {
+    ""
+}
+if (-not $FreshConfig) {
+    Write-Host "Preserving existing worker configuration at $EnvFile (no installer writes)."
+}
 
 if ($null -eq $ExistingService) {
     Write-Host "$ServiceName is not installed; proceeding with first-time dependency installation."
@@ -365,6 +359,7 @@ $FfmpegPath = if (Test-Path (Join-Path $WorkerFfmpegBin "ffmpeg.exe")) {
 
 if ($FreshConfig) {
     Copy-Item (Join-Path $SourceDir ".env.example") $EnvFile
+    Write-Host "Created a NEW worker .env from the example template at $EnvFile; configure its credentials before starting."
 }
 
 if ($FreshConfig -and $NativeNvidia) {
@@ -376,16 +371,6 @@ $WhisperDevice = (Get-EnvValue -Name "TOOLS_WORKER_WHISPER_DEVICE").ToLowerInvar
 $WhisperComputeType = (Get-EnvValue -Name "TOOLS_WORKER_WHISPER_COMPUTE_TYPE").ToLowerInvariant()
 $DiarizationDevice = (Get-EnvValue -Name "TOOLS_WORKER_DIARIZATION_DEVICE").ToLowerInvariant()
 $DiarizationEnabled = Test-Truthy (Get-EnvValue -Name "TOOLS_WORKER_DIARIZATION_ENABLED")
-$ConfigBaseUrl = Get-EnvValue -Name "TOOLS_API_BASE_URL"
-$ConfigWorkerToken = Get-EnvValue -Name "TOOLS_WORKER_TOKEN"
-$CanRepairGeneratedCudaDefault = Test-CanRepairGeneratedCudaDefault `
-    -FreshConfig $FreshConfig `
-    -ServiceExists ($null -ne $ExistingService) `
-    -BaseUrl $ConfigBaseUrl `
-    -WorkerToken $ConfigWorkerToken `
-    -WhisperDevice $WhisperDevice `
-    -WhisperComputeType $WhisperComputeType
-
 if ($WhisperDevice -eq "cuda") {
     if (-not $NativeNvidia) {
         throw "TOOLS_WORKER_WHISPER_DEVICE=cuda requires a native Windows NVIDIA driver visible through nvidia-smi.exe. WSL is not used by this worker."
@@ -412,17 +397,13 @@ if ($WhisperDevice -eq "cuda") {
             Where-Object { $_ }
     )
 
-    $RepairGeneratedCudaDefault = $CanRepairGeneratedCudaDefault -and ($SupportedComputeTypes -notcontains $WhisperComputeType)
-    if ($FreshConfig -or $RepairGeneratedCudaDefault) {
+    if ($FreshConfig) {
         $SelectedComputeType = Select-CTranslate2ComputeType -SupportedTypes $SupportedComputeTypes
         if (-not $SelectedComputeType) {
             throw "CTranslate2 detected the NVIDIA GPU but reported no supported worker compute type. Reported types: $($SupportedComputeTypes -join ', ')."
         }
         Set-EnvValue -Name "TOOLS_WORKER_WHISPER_COMPUTE_TYPE" -Value $SelectedComputeType
         $WhisperComputeType = $SelectedComputeType
-        if ($RepairGeneratedCudaDefault) {
-            Write-Host "Recovered stale installer-generated CUDA compute type from a previous incomplete installation: $SelectedComputeType"
-        }
     }
 
     if ($WhisperComputeType -notin @("", "auto", "default") -and $SupportedComputeTypes -notcontains $WhisperComputeType) {
@@ -457,6 +438,16 @@ $ParametersKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName\Parameter
 New-Item -Path $ParametersKey -Force | Out-Null
 New-ItemProperty -Path $ParametersKey -Name "EnvFile" -PropertyType String -Value $EnvFile -Force | Out-Null
 New-ItemProperty -Path $ParametersKey -Name "PythonExe" -PropertyType String -Value $VenvPython -Force | Out-Null
+
+# Do not signal a successful reinstall or start the service when an existing
+# configuration changed on disk during installation, regardless of the cause.
+if (-not $FreshConfig) {
+    $CurrentConfigHash = (Get-FileHash -LiteralPath $EnvFile -Algorithm SHA256).Hash
+    if ($CurrentConfigHash -ne $ExistingConfigHash) {
+        throw "Existing worker .env changed during installation at $EnvFile. Refusing to start; inspect and restore the expected configuration."
+    }
+    Write-Host "Verified existing .env unchanged (SHA-256)."
+}
 
 $Token = Get-EnvValue -Name "TOOLS_WORKER_TOKEN"
 $BaseUrl = Get-EnvValue -Name "TOOLS_API_BASE_URL"
