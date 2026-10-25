@@ -37,6 +37,7 @@ class WindowsEnvPreservationTests(unittest.TestCase):
         )
         self.assertIn("[System.IO.File]::ReadAllBytes($EnvFile)", uninstaller)
         self.assertIn("[System.IO.File]::WriteAllBytes($EnvFile, $PreservedConfig)", uninstaller)
+        self.assertIn("if ($null -ne $PreservedConfig)", uninstaller)
         self.assertNotIn("Get-Content -Path $EnvFile -Raw", uninstaller)
         self.assertNotIn("Set-Content -Path $EnvFile", uninstaller)
         self.assertIn("-and -not $RemoveConfig", uninstaller)
