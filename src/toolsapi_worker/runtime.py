@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -585,6 +587,7 @@ class WorkerRuntime:
             raise errors[0]
 
     def _run_whisper_loop(self, stop: threading.Event) -> None:
+        consecutive_poll_failures = 0
         while not stop.is_set():
             try:
                 claim = self.client.claim_whisper(
@@ -597,9 +600,25 @@ class WorkerRuntime:
                 )
             except WorkerAuthenticationError:
                 raise
-            except WorkerApiError:
+            except WorkerApiError as exc:
+                consecutive_poll_failures += 1
+                if consecutive_poll_failures == 1 or consecutive_poll_failures % 10 == 0:
+                    # Do not emit exception bodies/URLs: worker credentials and
+                    # provider responses must not leak into local service logs.
+                    status = re.search(r"\\bHTTP\\s+([1-5][0-9]{2})\\b", str(exc))
+                    detail = f" (HTTP {status.group(1)})" if status else ""
+                    print(
+                        f"Whisper claim polling unavailable: {type(exc).__name__}{detail} "
+                        f"({consecutive_poll_failures} consecutive attempts).",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 self._wait_for_poll(stop)
                 continue
+
+            if consecutive_poll_failures:
+                print("Whisper claim polling recovered.", file=sys.stderr, flush=True)
+                consecutive_poll_failures = 0
 
             if claim is None:
                 self._wait_for_poll(stop)
