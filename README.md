@@ -228,6 +228,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -TorchInd
 
 An explicit `-TorchIndexUrl` always wins over automatic architecture selection.
 
+A Windows uninstall without `-RemoveConfig` also preserves the `.env` as raw bytes (including existing BOM/encoding, CRLF and trailing newlines), rather than decoding and rewriting it. This matters when doing a clean uninstall followed by reinstall.
+
 Uninstall the Windows service and runtime while preserving `.env`:
 
 ```powershell
