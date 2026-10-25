@@ -1,3 +1,9 @@
+## 2026-10-25 - Preserve Windows worker configuration on reinstall
+
+- Eliminate the legacy CUDA-repair exception that could rewrite an existing Windows worker `.env` when service/credential state resembled an incomplete installation. Existing configuration is now immutable to the installer, and a SHA-256 check verifies unchanged bytes before the service starts.
+- Refuse to generate a default `.env` if an already registered Windows worker's configuration is missing; only brand-new installations may initialize the template and GPU compute defaults. Retain strict validation of explicitly configured CUDA compute types.
+- Add isolated PowerShell regression coverage for read-only existing configuration and first-install writes, plus source-contract checks. No automatic test CI restored.
+
 ## 2026-10-25 - Disable automatic worker test CI
 
 - Removed `.github/workflows/ci.yml`, which ran the Linux, Windows and macOS test matrix automatically on pushes and pull requests. Tests, fixtures and local `make check` / `make smoke-install` commands remain available for deliberate verification.
