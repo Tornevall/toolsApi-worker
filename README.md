@@ -314,9 +314,9 @@ make check
 make smoke-install
 ```
 
-Protocol/runtime unit tests do not require loading a real Whisper or pyannote model. Diarization tests use injected deterministic pipeline doubles and do not make live Hugging Face calls. The Ubuntu system-install GitHub Actions jobs exercise the production `whisper` dependency extra. Deterministic tests also cover the Debian/Ubuntu missing-venv bootstrap and CPU/CUDA runtime selection without requiring a physical GPU. CI additionally verifies that `make install` works on macOS without modifying managed system Python and validates that the generated launchd service receives the resolved ffmpeg directory in PATH.
+Protocol/runtime unit tests do not require loading a real Whisper or pyannote model. Diarization tests use injected deterministic pipeline doubles and do not make live Hugging Face calls. Installer/runtime fixtures cover Windows service registration, PowerShell GPU policy, Linux systemd and macOS launchd, though some integration checks require their respective operating systems.
 
-CI runs the core suite on Ubuntu 22.04 and Ubuntu 24.04 across Python 3.10, 3.11 and 3.12, plus Ubuntu root/systemd install-reinstall-uninstall coverage, macOS local/install coverage and Windows native protocol/runtime tests with PowerShell/service validation. Windows CI executes the same GPU policy helper used by the installer with deterministic Pascal and modern capability fixtures, verifies that service host/runtime files remain in the active worker-controlled Python prefix, propagates pywin32 registration failures, and performs a real Service Control Manager register/remove cycle. CI does not pretend to provide a physical NVIDIA GPU; native CUDA is validated by deterministic preflight tests in CI and by the installer plus every worker process start on actual GPU hosts.
+**Automatic GitHub Actions test CI is disabled:** `.github/workflows/ci.yml` was removed. Tests remain available for deliberate local execution with `make check`, `make smoke-install` and `python -m unittest discover -s tests -v` (Windows where supported). Changes to runtime, authorization, leases and installers should still be verified proportionally before merge; no automatic Linux/Windows/macOS test matrix is scheduled by pushes or PRs. Installer-time and worker-start runtime preflight checks remain enabled.
 
 ## Deployment
 
