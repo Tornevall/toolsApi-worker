@@ -13,11 +13,17 @@ $ServiceName = "ToolsAPIWorker"
 $WorkerFfmpegRoot = Join-Path $Prefix "ffmpeg"
 $WorkerFfmpegBin = Join-Path $WorkerFfmpegRoot "bin"
 $GpuPolicyScript = Join-Path $SourceDir "scripts\windows-gpu-policy.ps1"
+$EnvPolicyScript = Join-Path $SourceDir "scripts\windows-env-policy.ps1"
 
 if (-not (Test-Path $GpuPolicyScript)) {
     throw "Windows GPU policy helper is missing: $GpuPolicyScript"
 }
 . $GpuPolicyScript
+
+if (-not (Test-Path $EnvPolicyScript)) {
+    throw "Windows .env preservation helper is missing: $EnvPolicyScript"
+}
+. $EnvPolicyScript
 
 $Principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -178,36 +184,6 @@ function Get-EnvValue {
         }
     }
     return ""
-}
-
-function Set-EnvValue {
-    param(
-        [string]$Name,
-        [string]$Value
-    )
-
-    # Only the template created during this same first installation may be edited.
-    # Previous incomplete installations are still existing configurations: never
-    # infer permission to change their bytes from the service/credential state.
-    if (-not $FreshConfig) {
-        throw "Refusing to modify existing worker .env at $EnvFile ($Name). Update the file explicitly instead."
-    }
-
-    $Lines = @(Get-Content $EnvFile)
-    $Pattern = "^$([regex]::Escape($Name))="
-    $Found = $false
-    $Updated = foreach ($Line in $Lines) {
-        if ($Line -match $Pattern) {
-            $Found = $true
-            "$Name=$Value"
-        } else {
-            $Line
-        }
-    }
-    if (-not $Found) {
-        $Updated += "$Name=$Value"
-    }
-    Set-Content -Path $EnvFile -Value $Updated -Encoding UTF8
 }
 
 function Test-Truthy {
