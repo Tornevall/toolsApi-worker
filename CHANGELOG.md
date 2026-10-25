@@ -1,3 +1,7 @@
+## 2026-10-25 - Disable automatic worker test CI
+
+- Removed `.github/workflows/ci.yml`, which ran the Linux, Windows and macOS test matrix automatically on pushes and pull requests. Tests, fixtures and local `make check` / `make smoke-install` commands remain available for deliberate verification.
+- Kept `.github/workflows/deploy.yml` intact: deployment of the exact merged `main` commit and manual recovery through `workflow_dispatch` remain enabled. Production installation and worker startup safety checks are unaffected.
 ## 2026-10-25 - Windows launcher service lifecycle
 
 - `start.bat` no longer stops an existing service before attempting `git pull`; the Windows installer owns the stop/restart lifecycle, so a failed source update does not take a running worker offline.
