@@ -27,7 +27,7 @@ See [docs/architecture.md](docs/architecture.md) and [docs/contracts.md](docs/co
 3. Download lease-bound Tools-hosted media into a per-job temporary directory. URL-origin sources are staged by ToolsAPI first and arrive through the same `tools_media` path.
 4. Run the configured Whisper backend.
 5. Report heartbeat independently from transcript production so a slow model load remains visibly alive.
-6. If the claim has `diarization_requested=true`, run pyannote speaker diarization on the worker while the same lease heartbeat stays active.
+6. If the claim has `diarization_requested=true`, run pyannote speaker diarization on the worker while the same lease heartbeat stays active. Pyannote stage hooks are forwarded as bounded structured stage progress (`completed`, `total`, stage-local percentage when available); the worker does not invent a whole-diarization percentage.
 7. Map the detected speaker turns onto Whisper transcript segments.
 8. Submit transcript, speaker-labelled segments, safe runtime metadata and a structured diarization result.
 9. Retry the exact same terminal submission after transient API failures until ToolsAPI acknowledges it or rejects the lease.

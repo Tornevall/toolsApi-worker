@@ -54,6 +54,7 @@ All notable changes to toolsApi-worker are documented here.
 
 ### Fixed
 
+- Pyannote diarization now forwards provider stage callbacks through the existing lease heartbeat as bounded structured `diarization_progress` metadata, including trustworthy completed/total counts and stage-local percentage when available. Whole-run percentage is still not invented. Fixes #63.
 - Hardened macOS launchd reinstall/uninstall handling so stale service registrations are removed by service target and plist path before bootstrap. Bootstrap failures now include actionable service/plist/executable diagnostics and explicitly avoid suggesting root for the per-user installer. Fixes #65.
 - Windows TorchCodec/pyannote audio inputs now use seekable binary streams instead of filesystem path strings for the startup probe, live diarization and local diarization diagnostics. This avoids the TorchCodec 0.16 Windows `WinError 267` path failure while still exercising the real TorchCodec + FFmpeg decode stack. Fixes #61.
 - Windows bootstrap no longer treats an expected failed TorchCodec probe as a terminating PowerShell error. The installer captures the probe process exit code/stdout/stderr explicitly so a broken host FFmpeg can proceed into the shared-FFmpeg repair/retry path. `start.bat` now uses a simple elevated-token check and label flow so already-elevated sessions do not trip over the previous batch `errorlevel` handling. Fixes #59.
