@@ -16,6 +16,16 @@ class WindowsStartupSourceContractTests(unittest.TestCase):
         self.assertIn("scripts\\verify-windows-service.ps1", launcher)
         self.assertIn("worker service verification failed", launcher)
 
+    def test_launcher_does_not_stop_service_before_git_pull(self):
+        launcher = (ROOT / "start.bat").read_text(encoding="utf-8")
+        self.assertNotIn("Stop-Service", launcher)
+        self.assertNotIn("WaitForStatus('Stopped'", launcher)
+        git_index = launcher.index("git pull --ff-only")
+        installer_index = launcher.index("scripts\\install-windows.ps1")
+        self.assertLess(git_index, installer_index)
+        self.assertIn("The installer will start it after its checks", launcher)
+        self.assertIn("Existing service state was not changed", launcher)
+
     def test_verifier_does_not_claim_remote_readiness(self):
         verifier = (ROOT / "scripts" / "verify-windows-service.ps1").read_text(encoding="utf-8")
         self.assertIn("Get-Service", verifier)
