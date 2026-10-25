@@ -160,6 +160,11 @@ jobs:
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/uninstall-windows.ps1), [ref]$null, [ref]$errors) | Out-Null
           if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error }
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/verify-windows-service.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error }
+          $launcher = Get-Content start.bat -Raw
+          if ($launcher -notmatch 'verify-windows-service\.ps1') { throw 'Windows launcher must verify worker startup.' }
           $install = Get-Content scripts/install-windows.ps1 -Raw
           $policy = Get-Content scripts/windows-gpu-policy.ps1 -Raw
           if ($install -match 'ScheduledTask|New-ScheduledTask|Register-ScheduledTask') { throw 'Windows worker must run as a service, not Task Scheduler.' }

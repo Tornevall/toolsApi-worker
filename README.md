@@ -200,6 +200,8 @@ Windows service registration prepares an explicit `pythonservice.exe` inside the
 
 A pywin32 service-registration error is returned as a non-zero process exit code. The PowerShell installer stops immediately in that case and does not continue into service registry parameters or `Start-Service` after a failed install/update.
 
+After a successful installation, `start.bat` also checks that `ToolsAPIWorker` is running and that the Python polling child survives initial startup. A missing or repeatedly crashing child causes a non-zero exit with recent local diagnostics. Transient Whisper API claim failures (such as HTTP 503 or unreachable ToolsAPI) are logged at a bounded cadence and a recovery is logged when claim polling succeeds again; raw API responses, token values and URLs are not printed. Worker stdout/stderr is retained at `%ProgramData%\Tornevall\toolsapi-worker\logs\worker-runtime.log`, with one previous copy rotated when a child restarts and the active log exceeds 5 MiB. These logs are local to the host and should be treated as operationally sensitive. The check does **not** prove a successful ToolsAPI API poll/heartbeat; confirm remote registration in the Whisper runner view after startup.
+
 Configure:
 
 ```text

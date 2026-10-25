@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import filecmp
+from datetime import datetime
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,32 @@ SERVICE_NAME = "ToolsAPIWorker"
 SERVICE_DISPLAY_NAME = "Tornevall ToolsAPI Worker"
 SERVICE_DESCRIPTION = "Continuously polls ToolsAPI for delegated worker jobs."
 SERVICE_CLASS = "toolsapi_worker.windows_service.ToolsApiWorkerService"
+
+# Rotate the local CLI output on child restart to retain recent startup failures
+# without allowing a crash loop to accumulate unlimited log history.
+WORKER_LOG_MAX_BYTES = 5 * 1024 * 1024
+
+
+def launch_worker_process(
+    command: list[str], creation_flags: int, log_path: Path
+) -> subprocess.Popen[str]:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    if log_path.is_file() and log_path.stat().st_size >= WORKER_LOG_MAX_BYTES:
+        log_path.replace(log_path.with_suffix(".previous.log"))
+
+    with log_path.open("a", encoding="utf-8") as output:
+        output.write(
+            f"\n[{datetime.now().astimezone().isoformat(timespec='seconds')}] "
+            "Starting ToolsAPI worker polling process.\n"
+        )
+        output.flush()
+        return subprocess.Popen(
+            command,
+            creationflags=creation_flags,
+            text=True,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
 
 
 def configured_parameter(name: str) -> str:
@@ -236,7 +263,9 @@ class ToolsApiWorkerService(win32serviceutil.ServiceFramework):
             env_file,
         ]
         creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        self.child = subprocess.Popen(command, creationflags=creation_flags, text=True)
+        log_path = Path(env_file).parent / "logs" / "worker-runtime.log"
+        servicemanager.LogInfoMsg(f"ToolsAPI worker CLI output: {log_path}")
+        self.child = launch_worker_process(command, creation_flags, log_path)
 
         while True:
             wait_result = win32event.WaitForSingleObject(self.stop_event, 1000)
@@ -251,7 +280,7 @@ class ToolsApiWorkerService(win32serviceutil.ServiceFramework):
                     )
                 if win32event.WaitForSingleObject(self.stop_event, 5000) == win32event.WAIT_OBJECT_0:
                     return
-                self.child = subprocess.Popen(command, creationflags=creation_flags, text=True)
+                self.child = launch_worker_process(command, creation_flags, log_path)
 
     def _stop_child(self) -> None:
         child = self.child
