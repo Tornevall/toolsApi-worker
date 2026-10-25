@@ -605,7 +605,7 @@ class WorkerRuntime:
                 if consecutive_poll_failures == 1 or consecutive_poll_failures % 10 == 0:
                     # Do not emit exception bodies/URLs: worker credentials and
                     # provider responses must not leak into local service logs.
-                    status = re.search(r"\\bHTTP\\s+([1-5][0-9]{2})\\b", str(exc))
+                    status = re.search(r"\bHTTP\s+([1-5][0-9]{2})\b", str(exc))
                     detail = f" (HTTP {status.group(1)})" if status else ""
                     print(
                         f"Whisper claim polling unavailable: {type(exc).__name__}{detail} "
