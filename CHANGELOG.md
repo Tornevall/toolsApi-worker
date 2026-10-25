@@ -1,7 +1,7 @@
 ## 2026-10-25 - Windows worker startup diagnostics
 
 - `start.bat` now verifies the `ToolsAPIWorker` Windows service and live Python polling child after installation, returning a failure when the worker never starts or repeatedly restarts instead of treating service registration as successful runtime readiness.
-- Capture child stdout/stderr in a local worker-runtime log under `%ProgramData%\Tornevall\toolsapi-worker\logs`, rotate an oversized log on process restart, and show the latest diagnostics when startup fails. This local check cannot confirm the remote ToolsAPI heartbeat.
+- Capture child stdout/stderr in a local worker-runtime log under `%ProgramData%\Tornevall\toolsapi-worker\logs`, rotate an oversized log on process restart, and show the latest diagnostics when startup fails. Whisper claim polling now logs sanitized and rate-limited API failures/recovery; this local check cannot confirm the remote ToolsAPI heartbeat.
 - Add deterministic launcher contract and native Windows subprocess logging/rotation tests, plus the verifier syntax check in the existing Windows CI job.
 
 ## 2026-10-24 - Windows winget output handling
