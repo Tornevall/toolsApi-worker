@@ -46,7 +46,7 @@ if (Test-Path $Prefix) {
     Remove-Item -Path $Prefix -Recurse -Force
 }
 
-if ($PreservedConfig -ne $null) {
+if ($null -ne $PreservedConfig) {
     New-Item -ItemType Directory -Path $Prefix -Force | Out-Null
     [System.IO.File]::WriteAllBytes($EnvFile, $PreservedConfig)
     Write-Host "Removed worker runtime and Windows polling service. Preserved $EnvFile without re-encoding"
