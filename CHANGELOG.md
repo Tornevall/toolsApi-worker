@@ -1,3 +1,8 @@
+## 2026-10-25 - Windows launcher service lifecycle
+
+- `start.bat` no longer stops an existing service before attempting `git pull`; the Windows installer owns the stop/restart lifecycle, so a failed source update does not take a running worker offline.
+- Clarify pre-install service-status messages and print explicit confirmation only after local service and process verification. Add a focused regression test for the launcher ordering.
+
 ## 2026-10-25 - Windows worker startup diagnostics
 
 - `start.bat` now verifies the `ToolsAPIWorker` Windows service and live Python polling child after installation, returning a failure when the worker never starts or repeatedly restarts instead of treating service registration as successful runtime readiness.
