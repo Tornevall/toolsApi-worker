@@ -81,7 +81,7 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 - A real host `.env` must be created during installation when missing.
 - The canonical production runtime configuration lives in the installed project directory at `/opt/toolsapi-worker/.env` by default on Ubuntu, `${HOME}/.local/toolsapi-worker/.env` by default on macOS, `%ProgramData%\Tornevall\toolsapi-worker\.env` by default on Windows, or `${PREFIX}/.env` when a custom prefix is used.
 - Do not move the worker runtime `.env` into `/etc` or another external configuration directory.
-- Install, reinstall and deploy must preserve an existing runtime `.env` and its values.
+- Install, reinstall and deploy must preserve an existing runtime `.env` byte-for-byte (including comments, encoding, formatting, credentials and device settings). Never silently repair a guessed stale configuration; any existing file is operator-owned. If a registered Windows service lacks its config, stop with a clear error rather than creating placeholder credentials.
 - Fresh-host hardware auto-detection may initialize device/compute values only while creating a previously missing `.env`; it must never rewrite an existing host configuration during reinstall/deploy.
 - Uninstall preserves the project `.env` by default unless explicit configuration removal is requested.
 - Never commit `.env`, credentials, worker tokens or deployment secrets.
