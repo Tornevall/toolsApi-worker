@@ -31,6 +31,16 @@ class WindowsEnvPreservationTests(unittest.TestCase):
         self.assertNotIn("Test-CanRepairGeneratedCudaDefault", installer)
         self.assertNotIn("RepairGeneratedCudaDefault", installer)
 
+    def test_clean_windows_uninstall_preserves_original_config_bytes(self):
+        uninstaller = (ROOT / "scripts" / "uninstall-windows.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("[System.IO.File]::ReadAllBytes($EnvFile)", uninstaller)
+        self.assertIn("[System.IO.File]::WriteAllBytes($EnvFile, $PreservedConfig)", uninstaller)
+        self.assertNotIn("Get-Content -Path $EnvFile -Raw", uninstaller)
+        self.assertNotIn("Set-Content -Path $EnvFile", uninstaller)
+        self.assertIn("-and -not $RemoveConfig", uninstaller)
+
     @unittest.skipUnless(os.name == "nt", "Windows PowerShell tests require Windows")
     def test_existing_env_bytes_cannot_be_changed_by_writer(self):
         with tempfile.TemporaryDirectory() as temporary:
