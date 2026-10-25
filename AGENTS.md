@@ -88,6 +88,8 @@ This repository contains standalone ToolsAPI workers. Workers execute delegated 
 
 ## Testing
 
+- Automatic GitHub Actions **test CI** is deliberately removed by #75. Retain and maintain the source tests and local deterministic verification commands; never equate the absence of CI with validated code. Run appropriate focused checks manually when tools and target platforms are available. Do not silently recreate PR/push test workflows without an explicit request; production deployment workflow remains separately required.
+
 Every change affecting leases, claim semantics, heartbeat, retries, installer, configuration or handler contracts requires tests.
 
 Tests should cover at minimum when relevant:
