@@ -47,4 +47,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo.
+echo Verifying Windows service and worker process...
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-windows-service.ps1
+
+if errorlevel 1 (
+    echo Worker service verification failed. See diagnostics above.
+    exit /b 1
+)
+
 endlocal
