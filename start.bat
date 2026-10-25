@@ -16,12 +16,12 @@ echo Administrator elevation was cancelled or failed.
 exit /b 1
 
 :elevated
-echo Checking ToolsAPI Worker service...
+echo Checking current ToolsAPI Worker service state (no restart yet)...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$ErrorActionPreference = 'Stop'; try { $service = Get-Service -Name 'ToolsAPIWorker' -ErrorAction SilentlyContinue; if ($null -eq $service) { Write-Host 'ToolsAPIWorker is not installed; continuing with fresh installation.'; exit 0 }; if ($service.Status -eq 'Stopped') { Write-Host 'ToolsAPIWorker is already stopped.'; exit 0 }; Write-Host 'Stopping existing ToolsAPIWorker...'; Stop-Service -Name 'ToolsAPIWorker' -Force; $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30)); exit 0 } catch { Write-Error $_; exit 1 }"
+    "$ErrorActionPreference = 'Stop'; try { $service = Get-Service -Name 'ToolsAPIWorker' -ErrorAction SilentlyContinue; if ($null -eq $service) { Write-Host 'ToolsAPIWorker is not installed yet. The installer will register and start it when configured.'; exit 0 }; if ($service.Status -eq 'Running') { Write-Host 'ToolsAPIWorker is running. It will stay running during the Git update; the installer will handle restart.'; exit 0 }; Write-Host ('ToolsAPIWorker is currently ' + $service.Status + '. The installer will start it after its checks if credentials are configured.'); exit 0 } catch { Write-Error $_; exit 1 }"
 
 if errorlevel 1 (
-    echo Failed to stop an existing ToolsAPIWorker service.
+    echo Failed to check the existing ToolsAPIWorker service.
     exit /b 1
 )
 
@@ -55,5 +55,9 @@ if errorlevel 1 (
     echo Worker service verification failed. See diagnostics above.
     exit /b 1
 )
+
+echo.
+echo Windows worker installation and local process verification succeeded.
+echo Check the remote ToolsAPI dashboard to confirm the worker is reporting.
 
 endlocal
