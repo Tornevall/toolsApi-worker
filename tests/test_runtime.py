@@ -1,4 +1,6 @@
+import io
 import tempfile
+from contextlib import redirect_stderr
 import threading
 import time
 import unittest
@@ -184,6 +186,34 @@ class WorkerRuntimeTest(unittest.TestCase):
             diarization_requested=diarization_requested,
             input={"type": "tools_media", "download_url": "https://tools.example.test/api/whisper/worker/jobs/123/media"},
         )
+
+    def test_whisper_claim_poll_errors_are_locally_visible_without_secret_leakage(self):
+        stop = threading.Event()
+
+        class FailingThenRecoveredClient:
+            calls = 0
+
+            def claim_whisper(self, **_kwargs):
+                self.calls += 1
+                if self.calls <= 2:
+                    raise WorkerApiError("HTTP 503 secret_token_must_not_be_logged")
+                stop.set()
+                return None
+
+        with tempfile.TemporaryDirectory() as root:
+            runtime = WorkerRuntime(
+                self.config(root),
+                client=FailingThenRecoveredClient(),
+                handler=SlowHandler(delay=0.01),
+                diarizer=FakeDiarizer(),
+            )
+            output = io.StringIO()
+            with redirect_stderr(output):
+                runtime._run_whisper_loop(stop)
+
+        self.assertIn("Whisper claim polling unavailable: WorkerApiError (HTTP 503)", output.getvalue())
+        self.assertIn("Whisper claim polling recovered", output.getvalue())
+        self.assertNotIn("secret_token_must_not_be_logged", output.getvalue())
 
     def test_heartbeat_continues_while_handler_is_slow(self):
         client = FakeClient()
