@@ -1,3 +1,9 @@
+## 2026-11-21 - Recover empty VAD-filtered Whisper transcripts
+
+- Retry a Whisper transcription once without voice activity filtering when the first VAD-filtered pass produced no accepted text. Reuse the loaded model and leased input media; preserve normal success, timestamps, independent heartbeat, and lease checks. Do not retry decoder/model exceptions or create unbounded local loops.
+- Include a non-sensitive `vad_fallback_used` flag in worker completion runtime metadata. When both passes are empty, retain a clear terminal error and the existing ToolsAPI bounded remote retry policy.
+- Add deterministic regressions for successful original speech, recovered second-pass speech, persistently empty input, and model failure. Fixes #79.
+
 ## 2026-10-25 - Preserve Windows worker configuration on reinstall
 
 - Eliminate the legacy CUDA-repair exception that could rewrite an existing Windows worker `.env` when service/credential state resembled an incomplete installation. Existing configuration is now immutable to the installer, and a SHA-256 check verifies unchanged bytes before the service starts.
