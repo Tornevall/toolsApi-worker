@@ -1,3 +1,8 @@
+## 2026-11-21 - Stop pointless retries for no-speech Whisper audio
+
+- Treat a completed faster-whisper pass with no accepted transcript segments as a distinct, non-retryable `empty_transcript` outcome, instead of retrying the same silent/music-only media multiple times. Keep the existing VAD filtering to avoid hallucinated lyrics/speech on music. Preserve real model/decoder exception retries and heartbeat/lease safety.
+- Add a deterministic worker regression for empty-transcript terminal handling. Fixes #79.
+
 ## 2026-10-25 - Preserve Windows worker configuration on reinstall
 
 - Eliminate the legacy CUDA-repair exception that could rewrite an existing Windows worker `.env` when service/credential state resembled an incomplete installation. Existing configuration is now immutable to the installer, and a SHA-256 check verifies unchanged bytes before the service starts.

@@ -215,6 +215,31 @@ class WorkerRuntimeTest(unittest.TestCase):
         self.assertIn("Whisper claim polling recovered", output.getvalue())
         self.assertNotIn("secret_token_must_not_be_logged", output.getvalue())
 
+    def test_empty_whisper_transcript_is_non_retryable(self):
+        from toolsapi_worker.runtime import EmptyWhisperTranscriptError
+
+        class EmptyHandler:
+            def transcribe(self, claim, input_path, heartbeat):
+                raise EmptyWhisperTranscriptError("Whisper did not detect recognizable speech")
+
+        with tempfile.TemporaryDirectory() as root:
+            client = FakeClient()
+            diarizer = FakeDiarizer()
+            runtime = WorkerRuntime(
+                self.config(root),
+                client=client,
+                handler=EmptyHandler(),
+                diarizer=diarizer,
+            )
+            runtime.process_claim(self.claim())
+
+        self.assertEqual(1, len(client.fail_calls))
+        self.assertEqual("empty_transcript", client.fail_calls[0][1])
+        self.assertFalse(client.fail_calls[0][3])
+        self.assertEqual([], client.complete_calls)
+        self.assertEqual([], diarizer.calls)
+        self.assertEqual([], list(Path(root).iterdir()))
+
     def test_heartbeat_continues_while_handler_is_slow(self):
         client = FakeClient()
         heartbeat = LeaseHeartbeat(client, self.claim(), 0.05)
