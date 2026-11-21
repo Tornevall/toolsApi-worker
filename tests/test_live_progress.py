@@ -149,6 +149,73 @@ class LiveWhisperProgressTest(unittest.TestCase):
         self.assertEqual("Alpha Beta", snapshot.transcript_text)
         self.assertEqual(12.0, snapshot.transcript_segments[-1]["end"])
         self.assertEqual("Alpha Beta", result.transcript_text)
+        self.assertFalse(result.runtime["vad_fallback_used"])
+
+    def test_faster_whisper_retries_empty_vad_pass_without_filtering(self):
+        class FakeModel:
+            def __init__(self):
+                self.vad_calls = []
+
+            def transcribe(self, path, language=None, vad_filter=True):
+                self.vad_calls.append(vad_filter)
+                if vad_filter:
+                    return iter([]), SimpleNamespace(duration=12.0)
+                return iter([SimpleNamespace(start=1.0, end=8.0, text="Recovered speech")]), SimpleNamespace(duration=12.0)
+
+        model = FakeModel()
+        heartbeat = LeaseHeartbeat(FakeClient(), self.claim(), 0.05)
+        with tempfile.TemporaryDirectory() as root:
+            handler = FasterWhisperHandler(self.config(root), model_factory=lambda *args, **kwargs: model)
+            source = Path(root) / "source.mp3"
+            source.write_bytes(b"fixture")
+            result = handler.transcribe(self.claim(), source, heartbeat)
+
+        self.assertEqual([True, False], model.vad_calls)
+        self.assertEqual("Recovered speech", result.transcript_text)
+        self.assertTrue(result.runtime["vad_fallback_used"])
+        self.assertEqual(1.0, result.segments[0]["start"])
+        self.assertEqual("Recovered speech", heartbeat._snapshot().transcript_text)
+
+    def test_faster_whisper_empty_on_both_passes_fails_once(self):
+        class FakeModel:
+            def __init__(self):
+                self.vad_calls = []
+
+            def transcribe(self, path, language=None, vad_filter=True):
+                self.vad_calls.append(vad_filter)
+                return iter([]), SimpleNamespace(duration=12.0)
+
+        model = FakeModel()
+        heartbeat = LeaseHeartbeat(FakeClient(), self.claim(), 0.05)
+        with tempfile.TemporaryDirectory() as root:
+            handler = FasterWhisperHandler(self.config(root), model_factory=lambda *args, **kwargs: model)
+            source = Path(root) / "source.mp3"
+            source.write_bytes(b"fixture")
+            with self.assertRaisesRegex(RuntimeError, "empty transcript with and without"):
+                handler.transcribe(self.claim(), source, heartbeat)
+
+        self.assertEqual([True, False], model.vad_calls)
+        self.assertEqual("", heartbeat._snapshot().transcript_text)
+
+    def test_faster_whisper_model_failure_is_not_retried_without_vad(self):
+        class FakeModel:
+            def __init__(self):
+                self.vad_calls = []
+
+            def transcribe(self, path, language=None, vad_filter=True):
+                self.vad_calls.append(vad_filter)
+                raise RuntimeError("model decoder failed")
+
+        model = FakeModel()
+        heartbeat = LeaseHeartbeat(FakeClient(), self.claim(), 0.05)
+        with tempfile.TemporaryDirectory() as root:
+            handler = FasterWhisperHandler(self.config(root), model_factory=lambda *args, **kwargs: model)
+            source = Path(root) / "source.mp3"
+            source.write_bytes(b"fixture")
+            with self.assertRaisesRegex(RuntimeError, "model decoder failed"):
+                handler.transcribe(self.claim(), source, heartbeat)
+
+        self.assertEqual([True], model.vad_calls)
 
     @patch("urllib.request.urlopen")
     def test_api_progress_payload_contains_bounded_live_transcript(self, urlopen):
