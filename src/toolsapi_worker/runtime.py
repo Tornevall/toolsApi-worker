@@ -230,40 +230,56 @@ class FasterWhisperHandler:
         model = self._create_model(claim.model)
 
         started = time.monotonic()
-        heartbeat.update(20, "Transcribing", "Whisper model loaded; transcription started.")
-        segments_iter, info = model.transcribe(
-            str(input_path),
-            language=claim.language or None,
-            vad_filter=True,
-        )
-
-        duration = float(getattr(info, "duration", 0.0) or 0.0)
+        duration = 0.0
         segments: list[dict[str, Any]] = []
         transcript_parts: list[str] = []
+        vad_fallback_used = False
 
-        for segment in segments_iter:
+        # Some compressed or processed recordings can contain speech that VAD filters out.
+        # Reuse the loaded model and media for one bounded pass without VAD if no text survived.
+        for vad_filter in (True, False):
             heartbeat.assert_owned()
-            text = str(getattr(segment, "text", "") or "").strip()
-            start = float(getattr(segment, "start", 0.0) or 0.0)
-            end = float(getattr(segment, "end", 0.0) or 0.0)
-            if text and end > start:
-                segments.append({"start": round(start, 3), "end": round(end, 3), "text": text})
-                transcript_parts.append(text)
-                heartbeat.update_transcript(" ".join(transcript_parts).strip(), segments)
-
-            if duration > 0:
-                ratio = min(1.0, max(0.0, end / duration))
-                progress = 20 + int(ratio * 73)
-                detail = f"{end:.1f} / {duration:.1f} seconds"
+            if not vad_filter:
+                vad_fallback_used = True
+                heartbeat.update(20, "Transcribing", "No speech detected with VAD; retrying without speech filtering.")
             else:
-                progress = min(93, 20 + len(segments))
-                detail = f"{len(segments)} segments produced"
-            heartbeat.update(progress, "Transcribing", detail)
+                heartbeat.update(20, "Transcribing", "Whisper model loaded; transcription started.")
 
-        heartbeat.assert_owned()
-        transcript_text = " ".join(part for part in transcript_parts if part).strip()
+            segments_iter, info = model.transcribe(
+                str(input_path),
+                language=claim.language or None,
+                vad_filter=vad_filter,
+            )
+            duration = float(getattr(info, "duration", 0.0) or 0.0)
+            segments = []
+            transcript_parts = []
+
+            for segment in segments_iter:
+                heartbeat.assert_owned()
+                text = str(getattr(segment, "text", "") or "").strip()
+                segment_start = float(getattr(segment, "start", 0.0) or 0.0)
+                segment_end = float(getattr(segment, "end", 0.0) or 0.0)
+                if text and segment_end > segment_start:
+                    segments.append({"start": round(segment_start, 3), "end": round(segment_end, 3), "text": text})
+                    transcript_parts.append(text)
+                    heartbeat.update_transcript(" ".join(transcript_parts).strip(), segments)
+
+                if duration > 0:
+                    ratio = min(1.0, max(0.0, segment_end / duration))
+                    progress = 20 + int(ratio * 73)
+                    detail = f"{segment_end:.1f} / {duration:.1f} seconds"
+                else:
+                    progress = min(93, 20 + len(segments))
+                    detail = f"{len(segments)} segments produced"
+                heartbeat.update(progress, "Transcribing", detail)
+
+            heartbeat.assert_owned()
+            if transcript_parts:
+                break
+
+        transcript_text = " ".join(transcript_parts).strip()
         if not transcript_text:
-            raise RuntimeError("Whisper returned an empty transcript")
+            raise RuntimeError("Whisper returned an empty transcript with and without speech filtering")
 
         processing_seconds = round(time.monotonic() - started, 3)
         heartbeat.update(94, "Transcription complete", "Transcript ready; preparing requested post-processing.")
