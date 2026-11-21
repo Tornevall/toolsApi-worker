@@ -294,6 +294,7 @@ class FasterWhisperHandler:
                 "model": claim.model,
                 "duration_seconds": round(duration, 3) if duration > 0 else None,
                 "processing_seconds": processing_seconds,
+                "vad_fallback_used": vad_fallback_used,
             },
         )
 
