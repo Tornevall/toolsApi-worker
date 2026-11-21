@@ -207,6 +207,10 @@ def validate_whisper_runtime_device(config: WorkerConfig, ctranslate2_module: An
         )
 
 
+class EmptyWhisperTranscriptError(RuntimeError):
+    """A completed Whisper pass produced no usable speech text."""
+
+
 class FasterWhisperHandler:
     def __init__(
         self,
@@ -263,7 +267,7 @@ class FasterWhisperHandler:
         heartbeat.assert_owned()
         transcript_text = " ".join(part for part in transcript_parts if part).strip()
         if not transcript_text:
-            raise RuntimeError("Whisper returned an empty transcript")
+            raise EmptyWhisperTranscriptError("Whisper did not detect recognizable speech in the input")
 
         processing_seconds = round(time.monotonic() - started, 3)
         heartbeat.update(94, "Transcription complete", "Transcript ready; preparing requested post-processing.")
@@ -804,12 +808,14 @@ class WorkerRuntime:
                     heartbeat,
                 )
             else:
+                no_speech = isinstance(exc, EmptyWhisperTranscriptError)
                 self._retry_terminal(
                     lambda: self.client.fail_whisper(
                         claim,
-                        "transcription_failed",
-                        self._safe_error_message(exc),
-                        retryable=True,
+                        "empty_transcript" if no_speech else "transcription_failed",
+                        "Whisper did not detect recognizable speech in the input."
+                        if no_speech else self._safe_error_message(exc),
+                        retryable=not no_speech,
                     ),
                     heartbeat,
                 )
