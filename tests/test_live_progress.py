@@ -150,6 +150,30 @@ class LiveWhisperProgressTest(unittest.TestCase):
         self.assertEqual(12.0, snapshot.transcript_segments[-1]["end"])
         self.assertEqual("Alpha Beta", result.transcript_text)
 
+    def test_faster_whisper_music_only_input_returns_empty_speech_result(self):
+        from toolsapi_worker.runtime import EmptyWhisperTranscriptError
+
+        class FakeModel:
+            def __init__(self):
+                self.vad_calls = []
+
+            def transcribe(self, path, language=None, vad_filter=True):
+                self.vad_calls.append(vad_filter)
+                return iter([]), SimpleNamespace(duration=55.0)
+
+        model = FakeModel()
+        client = FakeClient()
+        heartbeat = LeaseHeartbeat(client, self.claim(), 0.05)
+        with tempfile.TemporaryDirectory() as root:
+            handler = FasterWhisperHandler(self.config(root), model_factory=lambda *args, **kwargs: model)
+            input_path = Path(root) / "music.mp3"
+            input_path.write_bytes(b"fixture")
+            with self.assertRaises(EmptyWhisperTranscriptError):
+                handler.transcribe(self.claim(), input_path, heartbeat)
+
+        self.assertEqual([True], model.vad_calls)
+        self.assertEqual("", heartbeat._snapshot().transcript_text)
+
     @patch("urllib.request.urlopen")
     def test_api_progress_payload_contains_bounded_live_transcript(self, urlopen):
         urlopen.return_value = FakeResponse(
